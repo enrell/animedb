@@ -11,8 +11,6 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// EnsureDatabase ensures that the provided database name exists, creating it when missing.
-// It returns a DSN that points to the requested database.
 func EnsureDatabase(ctx context.Context, adminDSN, databaseName string) (string, error) {
 	if databaseName == "" {
 		return "", fmt.Errorf("database name is required")
@@ -24,7 +22,6 @@ func EnsureDatabase(ctx context.Context, adminDSN, databaseName string) (string,
 	}
 	defer adminDB.Close()
 
-	// Ensure the admin connection is alive before proceeding.
 	if err := pingWithRetry(ctx, adminDB); err != nil {
 		return "", fmt.Errorf("ping admin connection: %w", err)
 	}
@@ -47,7 +44,6 @@ func EnsureDatabase(ctx context.Context, adminDSN, databaseName string) (string,
 		return "", fmt.Errorf("build database DSN: %w", err)
 	}
 
-	// Touch the target connection to ensure it is reachable and the migrations can run afterwards.
 	targetDB, err := sql.Open("postgres", targetDSN)
 	if err != nil {
 		return "", fmt.Errorf("open target connection: %w", err)
@@ -61,7 +57,6 @@ func EnsureDatabase(ctx context.Context, adminDSN, databaseName string) (string,
 	return targetDSN, nil
 }
 
-// EnsureSchemas executes each statement in order, typically used to create tables or add indexes.
 func EnsureSchemas(ctx context.Context, db *sql.DB, statements []string) error {
 	for _, stmt := range statements {
 		if strings.TrimSpace(stmt) == "" {
@@ -80,12 +75,10 @@ func replaceDatabase(rawDSN, databaseName string) (string, error) {
 		return "", err
 	}
 
-	// Prefer explicit dbname query parameter.
 	query := u.Query()
 	query.Set("dbname", databaseName)
 	u.RawQuery = query.Encode()
 
-	// Update the path component as well for URL based connection strings.
 	u.Path = "/" + databaseName
 
 	return u.String(), nil

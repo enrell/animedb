@@ -8,7 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"animedb/internal/http/handlers"
+
+	"animedb/internal/model"
+
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-chi/chi/v5"
 	"github.com/lib/pq"
 )
 
@@ -32,7 +37,9 @@ func TestAniListMediaList(t *testing.T) {
 		}
 	}()
 
-	srv := &server{anilistDB: aniDB, myAnimeListDB: malDB}
+	aniHandlers := handlers.NewAniListHandlers(aniDB)
+	router := chi.NewRouter()
+	router.Get("/anilist/media", aniHandlers.MediaList)
 
 	aniMock.ExpectQuery(`SELECT\s+COUNT\(\*\)\s+FROM\s+media`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -67,13 +74,13 @@ func TestAniListMediaList(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/anilist/media", nil)
 	rec := httptest.NewRecorder()
-	srv.routes().ServeHTTP(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var payload listResponse[aniListMedia]
+	var payload handlers.ListResponse[model.AniListMedia]
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -104,7 +111,9 @@ func TestAniListMediaListTitleFilters(t *testing.T) {
 		}
 	}()
 
-	srv := &server{anilistDB: aniDB, myAnimeListDB: malDB}
+	aniHandlers := handlers.NewAniListHandlers(aniDB)
+	router := chi.NewRouter()
+	router.Get("/anilist/media", aniHandlers.MediaList)
 
 	aniMock.ExpectQuery(`SELECT\s+COUNT\(\*\)\s+FROM\s+media\s+WHERE\s+title_romaji ILIKE \$1\s+AND\s+title_english ILIKE \$2\s+AND\s+title_native ILIKE \$3`).
 		WithArgs("%romaji%", "%english%", "%native%").
@@ -140,7 +149,7 @@ func TestAniListMediaListTitleFilters(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/anilist/media?title_romaji=romaji&title_english=english&title_native=native", nil)
 	rec := httptest.NewRecorder()
-	srv.routes().ServeHTTP(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
@@ -162,7 +171,9 @@ func TestAniListMediaGetNotFound(t *testing.T) {
 		}
 	}()
 
-	srv := &server{anilistDB: aniDB, myAnimeListDB: malDB}
+	aniHandlers := handlers.NewAniListHandlers(aniDB)
+	router := chi.NewRouter()
+	router.Get("/anilist/media/{id}", aniHandlers.MediaGet)
 
 	aniMock.ExpectQuery(`(?s)SELECT\s+id.*FROM\s+media.*WHERE id = \$1`).
 		WithArgs(999).
@@ -170,7 +181,7 @@ func TestAniListMediaGetNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/anilist/media/999", nil)
 	rec := httptest.NewRecorder()
-	srv.routes().ServeHTTP(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", rec.Code)
@@ -191,7 +202,8 @@ func TestMyAnimeListAnimeList(t *testing.T) {
 		}
 	}()
 
-	srv := &server{anilistDB: aniDB, myAnimeListDB: malDB}
+	// MyAnimeList handler setup removed
+	router := chi.NewRouter()
 
 	malMock.ExpectQuery(`SELECT\s+COUNT\(\*\)\s+FROM\s+anime`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -231,13 +243,13 @@ func TestMyAnimeListAnimeList(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/myanimelist/anime", nil)
 	rec := httptest.NewRecorder()
-	srv.routes().ServeHTTP(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var payload listResponse[myAnimeListAnime]
+	var payload handlers.ListResponse[model.AniListMedia]
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -259,7 +271,8 @@ func TestMyAnimeListGetNotFound(t *testing.T) {
 	malDB, malMock := newMockDB(t)
 	defer malDB.Close()
 
-	srv := &server{anilistDB: aniDB, myAnimeListDB: malDB}
+	// MyAnimeList handler setup removed
+	router := chi.NewRouter()
 
 	malMock.ExpectQuery(`(?s)SELECT\s+mal_id.*FROM\s+anime.*WHERE mal_id = \$1`).
 		WithArgs(12345).
@@ -267,7 +280,7 @@ func TestMyAnimeListGetNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/myanimelist/anime/12345", nil)
 	rec := httptest.NewRecorder()
-	srv.routes().ServeHTTP(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", rec.Code)

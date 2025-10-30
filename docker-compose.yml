@@ -10,4 +10,5 @@ services:
       - --listen
       - :8081
     working_dir: /app
+    restart: unless-stopped
     network_mode: host

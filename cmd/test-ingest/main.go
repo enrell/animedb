@@ -51,10 +51,10 @@ func main() {
 }
 
 func run(ctx context.Context, opts options) (err error) {
-	rand.Seed(time.Now().UnixNano())
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	anilistDB := fmt.Sprintf("anilist_test_%d_%d", time.Now().UnixNano(), rand.Intn(1000))
-	malDB := fmt.Sprintf("myanimelist_test_%d_%d", time.Now().UnixNano(), rand.Intn(1000))
+	anilistDB := fmt.Sprintf("anilist_test_%d_%d", time.Now().UnixNano(), rng.Intn(1000))
+	malDB := fmt.Sprintf("myanimelist_test_%d_%d", time.Now().UnixNano(), rng.Intn(1000))
 
 	defer func() {
 		if derr := dropDatabase(ctx, opts.dsn, malDB); derr != nil {
@@ -144,7 +144,6 @@ func dropDatabase(ctx context.Context, adminDSN, database string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// Terminate lingering sessions before attempting to drop.
 	_, _ = db.ExecContext(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1`, database)
 
 	stmt := fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, quoteIdentifier(database))

@@ -696,7 +696,6 @@ func parseRetryAfter(header http.Header) time.Duration {
 			}
 		}
 	}
-	// default to one minute fallback
 	return time.Minute
 }
 
