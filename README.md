@@ -1,0 +1,140 @@
+# AnimeDB Ingestion Tools
+
+This repository contains two Go CLIs that mirror data from public anime APIs into local PostgreSQL databases:
+
+- `cmd/anilist` pulls media data from the AniList GraphQL API into a database named `anilist`.
+- `cmd/myanimelist` pulls anime data from the Jikan REST API (MyAnimeList mirror) into a database named `myanimelist`.
+
+Both tools automatically create their target databases (and tables) if they do not already exist.
+
+## Prerequisites
+
+- Go 1.21+ (module currently targets Go `1.25.1` for toolchain compatibility).
+- PostgreSQL running locally with a user/database `root`/`root` as described in the task request.
+  - Update the connection string via the `--dsn` flag if your environment differs.
+- The ingestors enable the `unaccent` and `pg_trgm` extensions automatically; ensure your Postgres installation allows those extensions.
+
+## Building
+
+```bash
+go build ./...
+```
+
+This validates that both commands compile.
+
+## AniList Ingestion
+
+```bash
+go run ./cmd/anilist --dsn postgres://root:root@localhost:5432/root?sslmode=disable
+```
+
+Key flags:
+
+- `--dsn`: Admin-level Postgres connection string used to create/access the `anilist` database. Default matches the provided credentials.
+- `--database`: Override the default `anilist` database name (useful for testing).
+- `--per-page`: Page size per AniList GraphQL request (max 50).
+- `--start-page`: Starting page number (default 1).
+- `--max-pages`: Limit total pages processed (0 means fetch everything).
+- `--media-type`: AniList `MediaType` filter (default `ANIME`, accepts `MANGA`).
+
+The command respects AniList’s 90 requests/minute rate limit by dynamically pacing requests based on the response headers. On 429 responses it waits for the advertised reset window before retrying.
+
+## MyAnimeList (Jikan) Ingestion
+
+```bash
+go run ./cmd/myanimelist --dsn postgres://root:root@localhost:5432/root?sslmode=disable
+```
+
+Key flags:
+
+- `--dsn`: Admin-level Postgres connection string used to create/access the `myanimelist` database.
+- `--database`: Override the default `myanimelist` database name (useful for testing).
+- `--per-page`: Page size per request (Jikan caps at 25; default 25).
+- `--start-page`: Starting page number (default 1).
+- `--max-pages`: Limit total pages processed (0 means fetch everything).
+
+This command honours Jikan’s published rate limits by observing the `X-RateLimit-*` headers and `Retry-After` responses, backing off whenever the API signals throttling.
+
+## Output Schema Overview
+
+Each command creates a single `media`/`anime` table with indexed fields reflecting the public API payloads. Nested/array fields are stored as `JSONB` so that additional attributes can be accessed through PostgreSQL’s JSON operators without schema changes.
+
+Both tables also include a generated `normalized_title`/`normalized_name` column that stores a lower-cased, accent-free version of all known titles. A trigram GIN index is maintained on that column so fuzzy searches remain fast even with noisy input.
+
+See the definitions in:
+
+- `cmd/anilist/main.go` (`CREATE TABLE ... media`)
+- `cmd/myanimelist/main.go` (`CREATE TABLE ... anime`)
+
+## Operational Notes
+
+- Both ingestors stream sequentially through pages until the API reports no additional data or you hit the `--max-pages` limit.
+- Tables are populated using UPSERTs so re-running a command keeps the databases in sync.
+- Long-running ingestions can be interrupted with `Ctrl+C`; the commands handle context cancellation cleanly and leave committed data intact.
+
+## Smoke Test Script
+
+Run a quick end-to-end verification that exercises both ingestors against temporary databases and tears them down afterward:
+
+```bash
+go run ./cmd/test-ingest --dsn postgres://root:root@localhost:5432/root?sslmode=disable
+```
+
+- The script provisions two random database names, limits each ingestor to a single API page, validates that at least one row is stored, and finally drops both databases (using `DROP DATABASE ... WITH (FORCE)`).
+- Override `--anilist-pages`, `--anilist-per-page`, `--mal-pages`, or `--mal-per-page` to tweak throughput while keeping the test lightweight.
+
+## REST API Server
+
+Serve the ingested data over HTTP for web apps:
+
+```bash
+go run ./cmd/api :8081
+```
+
+The positional argument sets the listen address (defaults to `:8081`). You can still override DSNs with flags:
+
+```bash
+go run ./cmd/api :8081 \
+  --admin-dsn postgres://root:root@localhost:5432/root?sslmode=disable \
+  --anilist-dsn postgres://root:root@localhost:5432/anilist?sslmode=disable \
+  --myanimelist-dsn postgres://root:root@localhost:5432/myanimelist?sslmode=disable
+```
+
+Key endpoints:
+
+- `GET /healthz` – health check.
+- `GET /anilist/media/search` – top five AniList matches ranked by trigram similarity, returning titles plus a similarity `score`.
+- `GET /anilist/media` – paginated AniList catalogue (`page`, `page_size` ≤100, `search`, `type`, `season`, `season_year`).
+- `GET /anilist/media/{id}` – single AniList media record.
+- `GET /myanimelist/anime/search` – top five MyAnimeList matches ranked by trigram similarity, including a similarity `score`.
+- `GET /myanimelist/anime` – paginated Jikan catalogue (`page`, `page_size` ≤100, `search`, `type`, `season`, `year`).
+- `GET /myanimelist/anime/{id}` – single MyAnimeList anime record.
+
+`search` parameters on both listings use trigram similarity against the normalized title column, so partially cleaned file names still match the intended record.
+
+Example quick search (returns at most five results):
+
+```bash
+curl 'http://localhost:8081/anilist/media/search?search=tensei%20slime'
+```
+
+Paginated responses include metadata, e.g.:
+
+```jsonc
+{
+  "data": [...],
+  "pagination": {
+    "page": 1,
+    "page_size": 20,
+    "total": 1234
+  }
+}
+```
+
+The server checks that the backing databases exist (creating them through the admin DSN when missing) and applies query timeouts to keep requests responsive.
+
+## Operational Notes
+
+- Both ingestors stream sequentially through pages until the API reports no additional data or you hit the `--max-pages` limit.
+- Tables are populated using UPSERTs so re-running a command keeps the databases in sync.
+- Long-running ingestions can be interrupted with `Ctrl+C`; the commands handle context cancellation cleanly and leave committed data intact.

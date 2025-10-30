@@ -1,0 +1,13 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - go
+      - run
+      - ./cmd/api
+      - --listen
+      - :8081
+    working_dir: /app
+    network_mode: host
