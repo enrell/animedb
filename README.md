@@ -57,9 +57,9 @@ This command honours Jikan’s published rate limits by observing the `X-RateLim
 
 ## Output Schema Overview
 
-Each command creates a single `media`/`anime` table with indexed fields reflecting the public API payloads. Nested/array fields are stored as `JSONB` so that additional attributes can be accessed through PostgreSQL’s JSON operators without schema changes.
+Each command creates a single `media`/`anime` table with indexed fields reflecting the public API payloads. Nested/array fields are stored as `JSONB` so that additional attributes can be accessed through PostgreSQL's JSON operators without schema changes.
 
-Both tables also include a generated `normalized_title`/`normalized_name` column that stores a lower-cased, accent-free version of all known titles. A trigram GIN index is maintained on that column so fuzzy searches remain fast even with noisy input.
+Both tables use functional trigram GIN indexes on title expressions for fast fuzzy matching. Searches are accent-insensitive and normalize titles to lower case and ASCII.
 
 See the definitions in:
 
@@ -103,19 +103,28 @@ go run ./cmd/api :8081 \
 Key endpoints:
 
 - `GET /healthz` – health check.
-- `GET /anilist/media/search` – top five AniList matches ranked by trigram similarity, returning titles plus a similarity `score`.
-- `GET /anilist/media` – paginated AniList catalogue (`page`, `page_size` ≤100, `search`, `type`, `season`, `season_year`).
+- `GET /search/realtime` – unified real-time search (supports both AniList and MyAnimeList with source filtering).
+- `GET /anilist/media/search` – top K AniList matches ranked by BM25 with season awareness (`search`, `limit` ≤50, default 10).
+- `GET /anilist/media` – paginated AniList catalogue (`page`, `page_size` ≤500, `search`, `type`, `season`, `season_year`).
 - `GET /anilist/media/{id}` – single AniList media record.
-- `GET /myanimelist/anime/search` – top five MyAnimeList matches ranked by trigram similarity, including a similarity `score`.
-- `GET /myanimelist/anime` – paginated Jikan catalogue (`page`, `page_size` ≤100, `search`, `type`, `season`, `year`).
+- `GET /myanimelist/anime/search` – top K MyAnimeList matches ranked by BM25 (`search`, `limit` ≤50, default 10).
+- `GET /myanimelist/anime` – paginated MyAnimeList catalogue (`page`, `page_size` ≤500, `search`, `type`, `season`, `year`).
 - `GET /myanimelist/anime/{id}` – single MyAnimeList anime record.
 
-`search` parameters on both listings use trigram similarity against the normalized title column, so partially cleaned file names still match the intended record.
+Search endpoints use two-stage ranking:
+- **Stage 1 (Prefilter)**: Trigram similarity returns top 100 candidates from PostgreSQL.
+- **Stage 2 (Re-rank)**: BM25 algorithm with n-grams (up to trigrams) and season matching.
 
-Example quick search (returns at most five results):
+Example quick search (returns up to 10 results, configurable via `limit`):
 
 ```bash
-curl 'http://localhost:8081/anilist/media/search?search=tensei%20slime'
+curl 'http://localhost:8081/anilist/media/search?search=tensei%20slime&limit=5'
+```
+
+Example realtime unified search (defaults to source=both):
+
+```bash
+curl 'http://localhost:8081/search/realtime?q=attack%20titan&source=both&limit=10'
 ```
 
 Paginated responses include metadata, e.g.:
