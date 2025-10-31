@@ -10,21 +10,32 @@ import (
 func EnsureMyAnimeListSearchHelpers(ctx context.Context, db *sql.DB, normalizeTitleFunctionSQL string) error {
 	schemaCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	statements := []string{
+	
+	baseStatements := []string{
 		`CREATE EXTENSION IF NOT EXISTS unaccent;`,
 		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
 		normalizeTitleFunctionSQL,
 	}
+	
+	if err := EnsureSchemas(schemaCtx, db, baseStatements); err != nil {
+		return err
+	}
+	
 	exists, err := TableExists(schemaCtx, db, "anime")
 	if err != nil {
 		return err
 	}
+	
 	if exists {
-		statements = append(statements,
+		indexStatements := []string{
 			`CREATE INDEX IF NOT EXISTS anime_title_trgm_idx ON anime USING gin ( normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) gin_trgm_ops );`,
-		)
+		}
+		if err := EnsureSchemas(schemaCtx, db, indexStatements); err != nil {
+			return err
+		}
 	}
-	return EnsureSchemas(schemaCtx, db, statements)
+	
+	return nil
 }
 
 func TableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
