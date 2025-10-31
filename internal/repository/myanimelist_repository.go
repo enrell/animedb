@@ -109,7 +109,7 @@ func (r *myAnimeListRepository) buildFilterQuery(filters MyAnimeListFilters) (*Q
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		searchArgPos = qb.AddArg(search)
 		condition := fmt.Sprintf(
-			"((length(normalize_title($%d)) < 3 AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) %% normalize_title($%d))",
+			"((length(normalize_title($%d)) < 3 AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($%d)) > 0.3)",
 			searchArgPos, searchArgPos, searchArgPos)
 		qb.AddRawCondition(condition)
 	}
@@ -188,10 +188,10 @@ SELECT
 	title_japanese,
 	similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) AS score
 FROM anime
-WHERE (
-	length(normalize_title($1)) < 3
-		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%'
-) OR normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) %% normalize_title($1)
+WHERE 
+	(length(normalize_title($1)) < 3
+		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%')
+	OR similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) > 0.3
 ORDER BY score DESC, mal_id
 LIMIT $2;
 `
@@ -229,10 +229,10 @@ SELECT
 	title_japanese,
 	similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) AS score
 FROM anime
-WHERE (
-	length(normalize_title($1)) < 3
-		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%'
-) OR normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) %% normalize_title($1)
+WHERE 
+	(length(normalize_title($1)) < 3
+		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%')
+	OR similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) > 0.3
 ORDER BY score DESC, mal_id
 LIMIT $2;
 `
