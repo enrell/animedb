@@ -74,17 +74,9 @@ var schemaStatements = []string{
 		demographics JSONB,
 		raw JSONB
 	);`,
-	`ALTER TABLE anime
-ADD COLUMN IF NOT EXISTS normalized_name TEXT GENERATED ALWAYS AS (
-	normalize_title(
-		COALESCE(title, '') || ' ' ||
-		COALESCE(title_english, '') || ' ' ||
-		COALESCE(title_japanese, '')
-	)
-) STORED;`,
 	`CREATE INDEX IF NOT EXISTS anime_year_idx ON anime (year);`,
 	`CREATE INDEX IF NOT EXISTS anime_season_idx ON anime (season);`,
-	`CREATE INDEX IF NOT EXISTS idx_anime_normalized_name_trgm ON anime USING gin (normalized_name gin_trgm_ops);`,
+	`CREATE INDEX IF NOT EXISTS anime_title_trgm_idx ON anime USING gin ( normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) gin_trgm_ops );`,
 }
 
 func main() {

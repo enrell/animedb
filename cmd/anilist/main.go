@@ -74,17 +74,9 @@ var schemaStatements = []string{
 		is_adult BOOLEAN,
 		is_licensed BOOLEAN
 	);`,
-	`ALTER TABLE media
-ADD COLUMN IF NOT EXISTS normalized_title TEXT GENERATED ALWAYS AS (
-	normalize_title(
-		COALESCE(title_romaji, '') || ' ' ||
-		COALESCE(title_english, '') || ' ' ||
-		COALESCE(title_native, '')
-	)
-) STORED;`,
 	`CREATE INDEX IF NOT EXISTS media_season_year_idx ON media (season_year);`,
 	`CREATE INDEX IF NOT EXISTS media_type_idx ON media (type);`,
-	`CREATE INDEX IF NOT EXISTS media_normalized_title_trgm_idx ON media USING gin (normalized_title gin_trgm_ops);`,
+	`CREATE INDEX IF NOT EXISTS media_title_trgm_idx ON media USING gin ( normalize_title(COALESCE(title_romaji,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_native,'')) gin_trgm_ops );`,
 }
 
 func main() {
