@@ -13,6 +13,7 @@ import (
 	"animedb/internal/http/response"
 	"animedb/internal/model"
 	"animedb/internal/repository"
+	"animedb/internal/service"
 )
 
 type MyAnimeListHandlers struct {
@@ -27,7 +28,7 @@ func (h *MyAnimeListHandlers) MediaList(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	page, pageSize := response.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"), 20, 100)
+	page, pageSize := response.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"), 20, 500)
 
 	filters := repository.MyAnimeListFilters{
 		Search: r.URL.Query().Get("search"),
@@ -92,7 +93,17 @@ func (h *MyAnimeListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	results, err := h.repo.Search(ctx, search)
+	limit := 10
+	if limitStr := strings.TrimSpace(r.URL.Query().Get("limit")); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	results, err := service.HandleImprovedMyAnimeListSearch(ctx, h.repo, search, limit)
 	if err != nil {
 		response.WriteError(w, http.StatusInternalServerError, err)
 		return
@@ -100,16 +111,12 @@ func (h *MyAnimeListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request
 
 	var searchResults []searchResult
 	for _, r := range results {
-		if !r.Score.Valid {
-			continue
-		}
-
 		result := searchResult{
 			ID:      r.ID,
-			Title:   firstNonEmpty(r.Title.String, r.TitleEnglish.String, r.TitleJapanese.String),
-			English: r.TitleEnglish.String,
-			Native:  r.TitleJapanese.String,
-			Score:   r.Score.Float64,
+			Title:   firstNonEmpty(r.Title, r.TitleEnglish, r.TitleJapanese),
+			English: r.TitleEnglish,
+			Native:  r.TitleJapanese,
+			Score:   r.Score,
 		}
 		searchResults = append(searchResults, result)
 	}

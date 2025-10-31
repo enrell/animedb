@@ -30,7 +30,7 @@ func (h *AniListHandlers) MediaList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
 	defer cancel()
 
-	page, pageSize := response.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"), 20, 100)
+	page, pageSize := response.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("page_size"), 20, 500)
 
 	filters := repository.AniListFilters{
 		Search:       r.URL.Query().Get("search"),
@@ -98,7 +98,17 @@ func (h *AniListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resultsWithMeta, err := service.HandleImprovedAniListSearch(ctx, h.repo, search)
+	limit := 10
+	if limitStr := strings.TrimSpace(r.URL.Query().Get("limit")); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	resultsWithMeta, err := service.HandleImprovedAniListSearch(ctx, h.repo, search, limit)
 	if err != nil {
 		response.WriteError(w, http.StatusInternalServerError, err)
 		return
