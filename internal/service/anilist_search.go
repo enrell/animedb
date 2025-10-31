@@ -70,7 +70,7 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 			TitleEnglish: sql.NullString{String: bestDoc.TitleEnglish, Valid: bestDoc.TitleEnglish != ""},
 			TitleNative:  sql.NullString{String: bestDoc.TitleNative, Valid: bestDoc.TitleNative != ""},
 			SeasonNumber: bestDoc.SeasonNumber,
-			Score:        1.0,
+			Score:        bestDoc.Score,
 		}
 
 		if hasQuerySeason && bestDoc.SeasonNumber > 0 {

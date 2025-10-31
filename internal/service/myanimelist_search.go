@@ -62,7 +62,7 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 			Title:         doc.TitleRomaji,
 			TitleEnglish:  doc.TitleEnglish,
 			TitleJapanese: doc.TitleNative,
-			Score:         1.0,
+			Score:         doc.Score,
 		}
 		resultList = append(resultList, result)
 	}

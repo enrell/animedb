@@ -30,6 +30,7 @@ type Document struct {
 	TitleEnglish string
 	TitleNative  string
 	SeasonNumber int
+	Score        float64
 }
 
 func NewBM25SearchEngine() *BM25SearchEngine {
@@ -200,6 +201,7 @@ func (e *BM25SearchEngine) RankTopK(query string, candidates []*Document, queryS
 		if i >= k {
 			break
 		}
+		rd.doc.Score = rd.score
 		result = append(result, rd.doc)
 	}
 
