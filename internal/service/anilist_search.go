@@ -10,7 +10,11 @@ import (
 	"animedb/internal/util"
 )
 
-func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRepository, search string) ([]model.SearchResultWithMetadata, error) {
+func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRepository, search string, k int) ([]model.SearchResultWithMetadata, error) {
+	if k <= 0 {
+		k = 1
+	}
+
 	querySeason, hasQuerySeason := util.ExtractSeasonNumber(search)
 	baseQuery := util.RemoveSeasonFromQuery(search)
 
@@ -19,7 +23,7 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 		searchTerm = search
 	}
 
-	results, err := repo.SearchMedia(ctx, searchTerm)
+	results, err := repo.PrefilterMedia(ctx, searchTerm, 100)
 	if err != nil {
 		return nil, err
 	}
@@ -52,24 +56,29 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 	}
 
 	engine := NewBM25SearchEngine()
-	bestDoc := engine.RankCandidates(ctx, search, candidates, querySeason, hasQuerySeason)
+	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, k)
 
-	if bestDoc == nil {
+	if len(topDocs) == 0 {
 		return []model.SearchResultWithMetadata{}, nil
 	}
 
-	result := model.SearchResultWithMetadata{
-		ID:           bestDoc.ID,
-		TitleRomaji:  sql.NullString{String: bestDoc.TitleRomaji, Valid: bestDoc.TitleRomaji != ""},
-		TitleEnglish: sql.NullString{String: bestDoc.TitleEnglish, Valid: bestDoc.TitleEnglish != ""},
-		TitleNative:  sql.NullString{String: bestDoc.TitleNative, Valid: bestDoc.TitleNative != ""},
-		SeasonNumber: bestDoc.SeasonNumber,
-		Score:        1.0,
+	var resultList []model.SearchResultWithMetadata
+	for _, bestDoc := range topDocs {
+		result := model.SearchResultWithMetadata{
+			ID:           bestDoc.ID,
+			TitleRomaji:  sql.NullString{String: bestDoc.TitleRomaji, Valid: bestDoc.TitleRomaji != ""},
+			TitleEnglish: sql.NullString{String: bestDoc.TitleEnglish, Valid: bestDoc.TitleEnglish != ""},
+			TitleNative:  sql.NullString{String: bestDoc.TitleNative, Valid: bestDoc.TitleNative != ""},
+			SeasonNumber: bestDoc.SeasonNumber,
+			Score:        1.0,
+		}
+
+		if hasQuerySeason && bestDoc.SeasonNumber > 0 {
+			result.HasSeasonMatch = (querySeason == bestDoc.SeasonNumber)
+		}
+
+		resultList = append(resultList, result)
 	}
 
-	if hasQuerySeason && bestDoc.SeasonNumber > 0 {
-		result.HasSeasonMatch = (querySeason == bestDoc.SeasonNumber)
-	}
-
-	return []model.SearchResultWithMetadata{result}, nil
+	return resultList, nil
 }
