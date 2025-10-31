@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"animedb/internal/http/handlers"
+	custommiddleware "animedb/internal/middleware"
 	"animedb/internal/postgres"
 	"animedb/internal/repository"
 
@@ -125,10 +126,13 @@ func main() {
 	myAnimeListHandlers := handlers.NewMyAnimeListHandlers(malRepo)
 	realtimeHandlers := handlers.NewRealtimeSearchHandlers(aniRepo, malRepo)
 
+	rateLimiter := custommiddleware.NewRateLimiter(100)
+
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
+	router.Use(rateLimiter.Middleware)
 
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
