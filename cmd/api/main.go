@@ -123,6 +123,7 @@ func main() {
 
 	aniHandlers := handlers.NewAniListHandlers(aniRepo)
 	myAnimeListHandlers := handlers.NewMyAnimeListHandlers(malRepo)
+	realtimeHandlers := handlers.NewRealtimeSearchHandlers(aniRepo, malRepo)
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -134,6 +135,8 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `{"status": "ok"}`)
 	})
+
+	router.Get("/search/realtime", realtimeHandlers.Search)
 
 	router.Route("/anilist", func(r chi.Router) {
 		r.Get("/media/search", aniHandlers.MediaSearch)
