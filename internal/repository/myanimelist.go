@@ -21,15 +21,7 @@ func EnsureMyAnimeListSearchHelpers(ctx context.Context, db *sql.DB, normalizeTi
 	}
 	if exists {
 		statements = append(statements,
-			`ALTER TABLE IF EXISTS anime
-	ADD COLUMN IF NOT EXISTS normalized_name TEXT GENERATED ALWAYS AS (
-		normalize_title(
-			COALESCE(title, '') || ' ' ||
-			COALESCE(title_english, '') || ' ' ||
-			COALESCE(title_japanese, '')
-		)
-	) STORED;`,
-			`CREATE INDEX IF NOT EXISTS idx_anime_normalized_name_trgm ON anime USING gin (normalized_name gin_trgm_ops);`,
+			`CREATE INDEX IF NOT EXISTS anime_title_trgm_idx ON anime USING gin ( normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) gin_trgm_ops );`,
 		)
 	}
 	return EnsureSchemas(schemaCtx, db, statements)
