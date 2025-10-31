@@ -28,7 +28,7 @@ IMMUTABLE
 STRICT
 AS $$
 	SELECT COALESCE(
-		trim(BOTH ' ' FROM regexp_replace(lower(unaccent(input)), '[^a-z0-9]+', ' ', 'g')),
+		trim(BOTH ' ' FROM regexp_replace(lower(public.unaccent(input)), '[^a-z0-9]+', ' ', 'g')),
 		''
 	);
 $$;
