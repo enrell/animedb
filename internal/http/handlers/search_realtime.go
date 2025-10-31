@@ -58,6 +58,13 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	page := 1
+	if pageStr := strings.TrimSpace(r.URL.Query().Get("page")); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
 	limit := 10
 	if limitStr := strings.TrimSpace(r.URL.Query().Get("limit")); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
@@ -78,19 +85,35 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	cacheKey := buildCacheKey("realtime", fmt.Sprintf("%s:%s", query, source), limit)
+	cacheKey := buildCacheKey("realtime", fmt.Sprintf("%s:%s:%d:%d", query, source, page, limit), limit)
+	type cachedResult struct {
+		Results []RealtimeSearchResult
+		Total   int
+	}
 	if cached, ok := h.cache.Get(cacheKey); ok {
-		if results, ok := cached.([]RealtimeSearchResult); ok {
-			response.WriteJSON(w, http.StatusOK, results)
+		if cr, ok := cached.(cachedResult); ok {
+			hasMore := cr.Total > page*limit
+			response.WriteJSON(w, http.StatusOK, response.SearchResponse[RealtimeSearchResult]{
+				Data: cr.Results,
+				Pagination: response.PaginationMeta{
+					Page:     page,
+					PageSize: limit,
+					Total:    cr.Total,
+					HasMore:  hasMore,
+				},
+			})
 			return
 		}
 	}
 
+	maxResults := limit * page
 	var results []RealtimeSearchResult
+	var total int
 
 	if source == "anilist" {
-		anilistResults, err := service.HandleImprovedAniListSearch(ctx, h.anilistRepo, query, limit)
+		anilistResults, anilistTotal, err := service.HandleImprovedAniListSearch(ctx, h.anilistRepo, query, maxResults)
 		if err == nil {
+			total = anilistTotal
 			for _, r := range anilistResults {
 				results = append(results, RealtimeSearchResult{
 					ID:      r.ID,
@@ -104,8 +127,9 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	} else if source == "myanimelist" {
-		malResults, err := service.HandleImprovedMyAnimeListSearch(ctx, h.malRepo, query, limit)
+		malResults, malTotal, err := service.HandleImprovedMyAnimeListSearch(ctx, h.malRepo, query, maxResults)
 		if err == nil {
+			total = malTotal
 			for _, r := range malResults {
 				results = append(results, RealtimeSearchResult{
 					ID:      r.ID,
@@ -119,14 +143,34 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	} else {
-		results = h.searchBothSources(ctx, query, limit)
+		results, total = h.searchBothSources(ctx, query, maxResults)
 	}
 
-	h.cache.Set(cacheKey, results)
-	response.WriteJSON(w, http.StatusOK, results)
+	var paginatedResults []RealtimeSearchResult
+	startIdx := (page - 1) * limit
+	endIdx := startIdx + limit
+	if startIdx < len(results) {
+		if endIdx > len(results) {
+			endIdx = len(results)
+		}
+		paginatedResults = results[startIdx:endIdx]
+	}
+
+	hasMore := len(results) >= maxResults && total >= 100
+	h.cache.Set(cacheKey, cachedResult{Results: paginatedResults, Total: total})
+
+	response.WriteJSON(w, http.StatusOK, response.SearchResponse[RealtimeSearchResult]{
+		Data: paginatedResults,
+		Pagination: response.PaginationMeta{
+			Page:     page,
+			PageSize: limit,
+			Total:    total,
+			HasMore:  hasMore,
+		},
+	})
 }
 
-func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query string, limit int) []RealtimeSearchResult {
+func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query string, limit int) ([]RealtimeSearchResult, int) {
 	querySeason, hasQuerySeason := util.ExtractSeasonNumber(query)
 	baseQuery := util.RemoveSeasonFromQuery(query)
 
@@ -181,8 +225,10 @@ func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query st
 		}
 	}
 
+	total := len(anilistPrefiltered) + len(malPrefiltered)
+
 	if len(allCandidates) == 0 {
-		return []RealtimeSearchResult{}
+		return []RealtimeSearchResult{}, total
 	}
 
 	engine := service.NewBM25SearchEngine()
@@ -205,5 +251,5 @@ func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query st
 		return results[i].Score > results[j].Score
 	})
 
-	return results
+	return results, total
 }

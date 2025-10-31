@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"animedb/internal/cache"
+	"animedb/internal/http/response"
 	"animedb/internal/model"
 	"animedb/internal/repository"
 
@@ -48,9 +49,12 @@ func TestAniListHandlers_MediaSearch(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 
-	var results []model.SearchResult
-	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+	var searchResponse response.SearchResponse[model.SearchResult]
+	if err := json.Unmarshal(w.Body.Bytes(), &searchResponse); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if searchResponse.Pagination.Page == 0 {
+		t.Error("expected pagination metadata")
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -75,14 +79,13 @@ func TestAniListHandlers_MediaSearch_EmptyQuery(t *testing.T) {
 }
 
 func TestAniListHandlers_MediaSearch_CacheHit(t *testing.T) {
-	handler, _, db := setupAniListHandler(t)
+	handler, mock, db := setupAniListHandler(t)
 	defer db.Close()
 
-	cachedResults := []model.SearchResult{
-		{ID: 1, Title: "Cached Result", Score: 0.9},
-	}
-	cacheKey := buildCacheKey("anilist", "slime", 10)
-	handler.cache.Set(cacheKey, cachedResults)
+	mock.ExpectQuery(`SELECT.*id.*title_romaji.*title_english.*title_native`).
+		WithArgs("slime", 100).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "title_romaji", "title_english", "title_native"}).
+			AddRow(1, "Slime", "Slime", ""))
 
 	req := httptest.NewRequest("GET", "/anilist/media/search?search=slime&limit=10", nil)
 	w := httptest.NewRecorder()
@@ -95,13 +98,33 @@ func TestAniListHandlers_MediaSearch_CacheHit(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 
-	var results []model.SearchResult
-	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+	var searchResponse response.SearchResponse[model.SearchResult]
+	if err := json.Unmarshal(w.Body.Bytes(), &searchResponse); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
+	if searchResponse.Pagination.Page == 0 {
+		t.Error("expected pagination metadata")
+	}
 
-	if len(results) != 1 || results[0].ID != 1 {
-		t.Errorf("expected cached result, got %v", results)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+
+	req2 := httptest.NewRequest("GET", "/anilist/media/search?search=slime&limit=10", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("expected status 200 on second request (should be cached), got %d", w2.Code)
+	}
+
+	var searchResponse2 response.SearchResponse[model.SearchResult]
+	if err := json.Unmarshal(w2.Body.Bytes(), &searchResponse2); err != nil {
+		t.Fatalf("failed to unmarshal cached response: %v", err)
+	}
+
+	if len(searchResponse2.Data) != len(searchResponse.Data) {
+		t.Errorf("expected cached result to match first request, got %d vs %d results", len(searchResponse2.Data), len(searchResponse.Data))
 	}
 }
 

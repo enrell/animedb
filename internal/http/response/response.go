@@ -8,12 +8,18 @@ import (
 )
 
 type PaginationMeta struct {
-	Page     int `json:"page"`
-	PageSize int `json:"page_size"`
-	Total    int `json:"total"`
+	Page     int  `json:"page"`
+	PageSize int  `json:"page_size"`
+	Total    int  `json:"total"`
+	HasMore  bool `json:"has_more"`
 }
 
 type ListResponse[T any] struct {
+	Data       []T            `json:"data"`
+	Pagination PaginationMeta `json:"pagination"`
+}
+
+type SearchResponse[T any] struct {
 	Data       []T            `json:"data"`
 	Pagination PaginationMeta `json:"pagination"`
 }

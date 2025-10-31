@@ -10,7 +10,7 @@ import (
 	"animedb/internal/util"
 )
 
-func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRepository, search string, k int) ([]model.SearchResultWithMetadata, error) {
+func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRepository, search string, k int) ([]model.SearchResultWithMetadata, int, error) {
 	if k <= 0 {
 		k = 1
 	}
@@ -25,8 +25,10 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 
 	results, err := repo.PrefilterMedia(ctx, searchTerm, 100)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+
+	totalCandidates := len(results)
 
 	var candidates []*Document
 	for _, result := range results {
@@ -52,14 +54,14 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 	}
 
 	if len(candidates) == 0 {
-		return []model.SearchResultWithMetadata{}, nil
+		return []model.SearchResultWithMetadata{}, 0, nil
 	}
 
 	engine := NewBM25SearchEngine()
 	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, k)
 
 	if len(topDocs) == 0 {
-		return []model.SearchResultWithMetadata{}, nil
+		return []model.SearchResultWithMetadata{}, totalCandidates, nil
 	}
 
 	var resultList []model.SearchResultWithMetadata
@@ -80,5 +82,5 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 		resultList = append(resultList, result)
 	}
 
-	return resultList, nil
+	return resultList, totalCandidates, nil
 }

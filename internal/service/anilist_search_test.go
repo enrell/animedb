@@ -34,9 +34,12 @@ func TestHandleImprovedAniListSearch(t *testing.T) {
 			AddRow(1, "Tensei Shitara Slime Datta Ken", "That Time I Got Reincarnated as a Slime", "").
 			AddRow(2, "Slime Taoshite", "Slime Hunting", ""))
 
-	results, err := HandleImprovedAniListSearch(ctx, repo, "slime", 10)
+	results, total, err := HandleImprovedAniListSearch(ctx, repo, "slime", 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if total < 0 {
+		t.Error("expected non-negative total")
 	}
 
 	if len(results) == 0 {
@@ -61,7 +64,7 @@ func TestHandleImprovedAniListSearch_SeasonAware(t *testing.T) {
 			AddRow(1, "Slime Season 1", "Slime Season 1", "").
 			AddRow(2, "Slime Season 2", "Slime Season 2", ""))
 
-	results, err := HandleImprovedAniListSearch(ctx, repo, "slime season 2", 10)
+	results, _, err := HandleImprovedAniListSearch(ctx, repo, "slime season 2", 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,13 +101,16 @@ func TestHandleImprovedAniListSearch_EmptyResult(t *testing.T) {
 		WithArgs("nonexistent", 100).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "title_romaji", "title_english", "title_native"}))
 
-	results, err := HandleImprovedAniListSearch(ctx, repo, "nonexistent", 10)
+	results, total, err := HandleImprovedAniListSearch(ctx, repo, "nonexistent", 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if len(results) != 0 {
 		t.Errorf("expected empty results, got %d", len(results))
+	}
+	if total != 0 {
+		t.Errorf("expected total 0 for empty results, got %d", total)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -124,7 +130,10 @@ func TestHandleImprovedAniListSearch_InvalidLimit(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "title_romaji", "title_english", "title_native"}).
 			AddRow(1, "Test", "Test", ""))
 
-	results, err := HandleImprovedAniListSearch(ctx, repo, "test", 0)
+	results, total, err := HandleImprovedAniListSearch(ctx, repo, "test", 0)
+	if total < 0 {
+		t.Error("expected non-negative total")
+	}
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

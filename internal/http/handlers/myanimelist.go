@@ -102,6 +102,13 @@ func (h *MyAnimeListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	page := 1
+	if pageStr := strings.TrimSpace(r.URL.Query().Get("page")); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
 	limit := 10
 	if limitStr := strings.TrimSpace(r.URL.Query().Get("limit")); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
@@ -112,34 +119,65 @@ func (h *MyAnimeListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request
 		limit = 50
 	}
 
-	cacheKey := buildCacheKey("myanimelist", search, limit)
+	cacheKey := buildCacheKey("myanimelist", fmt.Sprintf("%s:%d:%d", search, page, limit), limit)
+	type cachedResult struct {
+		Results []searchResult
+		Total   int
+	}
 	if cached, ok := h.cache.Get(cacheKey); ok {
-		if results, ok := cached.([]searchResult); ok {
-			response.WriteJSON(w, http.StatusOK, results)
+		if cr, ok := cached.(cachedResult); ok {
+			hasMore := cr.Total > page*limit
+			response.WriteJSON(w, http.StatusOK, response.SearchResponse[searchResult]{
+				Data: cr.Results,
+				Pagination: response.PaginationMeta{
+					Page:     page,
+					PageSize: limit,
+					Total:    cr.Total,
+					HasMore:  hasMore,
+				},
+			})
 			return
 		}
 	}
 
-	results, err := service.HandleImprovedMyAnimeListSearch(ctx, h.repo, search, limit)
+	maxResults := limit * page
+	results, total, err := service.HandleImprovedMyAnimeListSearch(ctx, h.repo, search, maxResults)
 	if err != nil {
 		response.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	var searchResults []searchResult
-	for _, r := range results {
-		result := searchResult{
-			ID:      r.ID,
-			Title:   firstNonEmpty(r.Title, r.TitleEnglish, r.TitleJapanese),
-			English: r.TitleEnglish,
-			Native:  r.TitleJapanese,
-			Score:   r.Score,
+	startIdx := (page - 1) * limit
+	endIdx := startIdx + limit
+	if startIdx < len(results) {
+		if endIdx > len(results) {
+			endIdx = len(results)
 		}
-		searchResults = append(searchResults, result)
+		for _, r := range results[startIdx:endIdx] {
+			result := searchResult{
+				ID:      r.ID,
+				Title:   firstNonEmpty(r.Title, r.TitleEnglish, r.TitleJapanese),
+				English: r.TitleEnglish,
+				Native:  r.TitleJapanese,
+				Score:   r.Score,
+			}
+			searchResults = append(searchResults, result)
+		}
 	}
 
-	h.cache.Set(cacheKey, searchResults)
-	response.WriteJSON(w, http.StatusOK, searchResults)
+	hasMore := len(results) >= maxResults && total >= 100
+	h.cache.Set(cacheKey, cachedResult{Results: searchResults, Total: total})
+
+	response.WriteJSON(w, http.StatusOK, response.SearchResponse[searchResult]{
+		Data: searchResults,
+		Pagination: response.PaginationMeta{
+			Page:     page,
+			PageSize: limit,
+			Total:    total,
+			HasMore:  hasMore,
+		},
+	})
 }
 
 type searchResult struct {

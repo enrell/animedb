@@ -34,9 +34,12 @@ func TestHandleImprovedMyAnimeListSearch(t *testing.T) {
 			AddRow(1, "Tensei Shitara Slime Datta Ken", "That Time I Got Reincarnated as a Slime", "", 0.8).
 			AddRow(2, "Slime Taoshite", "Slime Hunting", "", 0.7))
 
-	results, err := HandleImprovedMyAnimeListSearch(ctx, repo, "slime", 10)
+	results, total, err := HandleImprovedMyAnimeListSearch(ctx, repo, "slime", 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if total < 0 {
+		t.Error("expected non-negative total")
 	}
 
 	if len(results) == 0 {
@@ -61,7 +64,7 @@ func TestHandleImprovedMyAnimeListSearch_SeasonAware(t *testing.T) {
 			AddRow(1, "Attack on Titan Season 1", "Attack on Titan Season 1", "", 0.8).
 			AddRow(2, "Attack on Titan Season 2", "Attack on Titan Season 2", "", 0.9))
 
-	results, err := HandleImprovedMyAnimeListSearch(ctx, repo, "attack season 2", 10)
+	results, _, err := HandleImprovedMyAnimeListSearch(ctx, repo, "attack season 2", 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,13 +89,16 @@ func TestHandleImprovedMyAnimeListSearch_EmptyResult(t *testing.T) {
 		WithArgs("nonexistent", 100).
 		WillReturnRows(sqlmock.NewRows([]string{"mal_id", "title", "title_english", "title_japanese", "score"}))
 
-	results, err := HandleImprovedMyAnimeListSearch(ctx, repo, "nonexistent", 10)
+	results, total, err := HandleImprovedMyAnimeListSearch(ctx, repo, "nonexistent", 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if len(results) != 0 {
 		t.Errorf("expected empty results, got %d", len(results))
+	}
+	if total != 0 {
+		t.Errorf("expected total 0 for empty results, got %d", total)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -112,7 +118,10 @@ func TestHandleImprovedMyAnimeListSearch_InvalidLimit(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"mal_id", "title", "title_english", "title_japanese", "score"}).
 			AddRow(1, "Test", "Test", "", 0.5))
 
-	results, err := HandleImprovedMyAnimeListSearch(ctx, repo, "test", 0)
+	results, total, err := HandleImprovedMyAnimeListSearch(ctx, repo, "test", 0)
+	if total < 0 {
+		t.Error("expected non-negative total")
+	}
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

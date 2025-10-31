@@ -15,7 +15,7 @@ type MyAnimeListSearchResult struct {
 	Score         float64
 }
 
-func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnimeListRepository, search string, k int) ([]MyAnimeListSearchResult, error) {
+func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnimeListRepository, search string, k int) ([]MyAnimeListSearchResult, int, error) {
 	if k <= 0 {
 		k = 1
 	}
@@ -30,8 +30,10 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 
 	prefiltered, err := repo.PrefilterAnime(ctx, searchTerm, 100)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+
+	totalCandidates := len(prefiltered)
 
 	var candidates []*Document
 	for _, result := range prefiltered {
@@ -56,14 +58,14 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 	}
 
 	if len(candidates) == 0 {
-		return []MyAnimeListSearchResult{}, nil
+		return []MyAnimeListSearchResult{}, 0, nil
 	}
 
 	engine := NewBM25SearchEngine()
 	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, k)
 
 	if len(topDocs) == 0 {
-		return []MyAnimeListSearchResult{}, nil
+		return []MyAnimeListSearchResult{}, totalCandidates, nil
 	}
 
 	var resultList []MyAnimeListSearchResult
@@ -78,5 +80,5 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 		resultList = append(resultList, result)
 	}
 
-	return resultList, nil
+	return resultList, totalCandidates, nil
 }

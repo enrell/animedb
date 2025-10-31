@@ -109,6 +109,13 @@ func (h *AniListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page := 1
+	if pageStr := strings.TrimSpace(r.URL.Query().Get("page")); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
 	limit := 10
 	if limitStr := strings.TrimSpace(r.URL.Query().Get("limit")); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
@@ -119,35 +126,66 @@ func (h *AniListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	cacheKey := buildCacheKey("anilist", search, limit)
+	cacheKey := buildCacheKey("anilist", fmt.Sprintf("%s:%d:%d", search, page, limit), limit)
+	type cachedResult struct {
+		Results []model.SearchResult
+		Total   int
+	}
 	if cached, ok := h.cache.Get(cacheKey); ok {
-		if results, ok := cached.([]model.SearchResult); ok {
-			response.WriteJSON(w, http.StatusOK, results)
+		if cr, ok := cached.(cachedResult); ok {
+			hasMore := cr.Total > page*limit
+			response.WriteJSON(w, http.StatusOK, response.SearchResponse[model.SearchResult]{
+				Data: cr.Results,
+				Pagination: response.PaginationMeta{
+					Page:     page,
+					PageSize: limit,
+					Total:    cr.Total,
+					HasMore:  hasMore,
+				},
+			})
 			return
 		}
 	}
 
-	resultsWithMeta, err := service.HandleImprovedAniListSearch(ctx, h.repo, search, limit)
+	maxResults := limit * page
+	resultsWithMeta, total, err := service.HandleImprovedAniListSearch(ctx, h.repo, search, maxResults)
 	if err != nil {
 		response.WriteError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	var results []model.SearchResult
-	for _, r := range resultsWithMeta {
-		res := model.SearchResult{
-			ID:      r.ID,
-			Romaji:  r.TitleRomaji.String,
-			English: r.TitleEnglish.String,
-			Native:  r.TitleNative.String,
-			Score:   r.Score,
+	startIdx := (page - 1) * limit
+	endIdx := startIdx + limit
+	if startIdx < len(resultsWithMeta) {
+		if endIdx > len(resultsWithMeta) {
+			endIdx = len(resultsWithMeta)
 		}
-		res.Title = firstNonEmpty(r.TitleEnglish.String, r.TitleRomaji.String, r.TitleNative.String)
-		results = append(results, res)
+		for _, r := range resultsWithMeta[startIdx:endIdx] {
+			res := model.SearchResult{
+				ID:      r.ID,
+				Romaji:  r.TitleRomaji.String,
+				English: r.TitleEnglish.String,
+				Native:  r.TitleNative.String,
+				Score:   r.Score,
+			}
+			res.Title = firstNonEmpty(r.TitleEnglish.String, r.TitleRomaji.String, r.TitleNative.String)
+			results = append(results, res)
+		}
 	}
 
-	h.cache.Set(cacheKey, results)
-	response.WriteJSON(w, http.StatusOK, results)
+	hasMore := len(resultsWithMeta) >= maxResults && total >= 100
+	h.cache.Set(cacheKey, cachedResult{Results: results, Total: total})
+
+	response.WriteJSON(w, http.StatusOK, response.SearchResponse[model.SearchResult]{
+		Data: results,
+		Pagination: response.PaginationMeta{
+			Page:     page,
+			PageSize: limit,
+			Total:    total,
+			HasMore:  hasMore,
+		},
+	})
 }
 
 func firstNonEmpty(values ...string) string {

@@ -132,6 +132,7 @@ func main() {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
+	router.Use(custommiddleware.ValidationMiddleware)
 	router.Use(rateLimiter.Middleware)
 
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
