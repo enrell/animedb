@@ -32,7 +32,7 @@ IMMUTABLE
 STRICT
 AS $$
 	SELECT COALESCE(
-		trim(BOTH ' ' FROM regexp_replace(lower(unaccent(input)), '[^a-z0-9]+', ' ', 'g')),
+		trim(BOTH ' ' FROM regexp_replace(lower(public.unaccent(input)), '[^a-z0-9]+', ' ', 'g')),
 		''
 	);
 $$;
@@ -47,7 +47,7 @@ AS $$
 		trim(BOTH ' ' FROM
 			regexp_replace(
 				regexp_replace(
-					lower(unaccent(input)),
+					lower(public.unaccent(input)),
 					'(\d+)(st|nd|rd|th)\s*season',
 					'season \1',
 					'gi'
