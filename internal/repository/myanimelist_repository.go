@@ -12,7 +12,8 @@ import (
 type MyAnimeListRepository interface {
 	GetByID(ctx context.Context, id int) (model.MyAnimeListAnime, error)
 	List(ctx context.Context, filters MyAnimeListFilters, page, pageSize int) ([]model.MyAnimeListAnime, int, error)
-	Search(ctx context.Context, search string) ([]MyAnimeListSearchResult, error)
+	Search(ctx context.Context, search string, limit int) ([]MyAnimeListSearchResult, error)
+	PrefilterAnime(ctx context.Context, search string, limit int) ([]MyAnimeListSearchResult, error)
 	Count(ctx context.Context, whereClause string, args []any) (int, error)
 }
 
@@ -108,7 +109,7 @@ func (r *myAnimeListRepository) buildFilterQuery(filters MyAnimeListFilters) (*Q
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		searchArgPos = qb.AddArg(search)
 		condition := fmt.Sprintf(
-			"((length(normalize_title($%d)) < 3 AND normalized_name ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR similarity(normalized_name, normalize_title($%d)) >= 0.30)",
+			"((length(normalize_title($%d)) < 3 AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) %% normalize_title($%d))",
 			searchArgPos, searchArgPos, searchArgPos)
 		qb.AddRawCondition(condition)
 	}
@@ -150,7 +151,7 @@ func (r *myAnimeListRepository) buildSelectQuery(whereClause string, searchArgPo
 
 func (r *myAnimeListRepository) buildOrderClause(searchArgPos int) string {
 	if searchArgPos > 0 {
-		return fmt.Sprintf(" ORDER BY similarity(normalized_name, normalize_title($%d)) DESC, mal_id", searchArgPos)
+		return fmt.Sprintf(" ORDER BY similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($%d)) DESC, mal_id", searchArgPos)
 	}
 	return " ORDER BY mal_id"
 }
@@ -178,24 +179,65 @@ func (r *myAnimeListRepository) executeQuery(ctx context.Context, query string, 
 	return results, nil
 }
 
-func (r *myAnimeListRepository) Search(ctx context.Context, search string) ([]MyAnimeListSearchResult, error) {
+func (r *myAnimeListRepository) Search(ctx context.Context, search string, limit int) ([]MyAnimeListSearchResult, error) {
 	const query = `
 SELECT
 	mal_id,
 	title,
 	title_english,
 	title_japanese,
-	similarity(normalized_name, normalize_title($1)) AS score
+	similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) AS score
 FROM anime
 WHERE (
 	length(normalize_title($1)) < 3
-		AND normalized_name ILIKE '%' || normalize_title($1) || '%'
-) OR normalized_name % normalize_title($1)
+		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%'
+) OR normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) %% normalize_title($1)
 ORDER BY score DESC, mal_id
-LIMIT 5;
+LIMIT $2;
 `
 
-	rows, err := r.db.QueryContext(ctx, query, search)
+	rows, err := r.db.QueryContext(ctx, query, search, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MyAnimeListSearchResult
+	for rows.Next() {
+		var result MyAnimeListSearchResult
+		if err := rows.Scan(&result.ID, &result.Title, &result.TitleEnglish, &result.TitleJapanese, &result.Score); err != nil {
+			return nil, err
+		}
+		if result.Score.Valid {
+			results = append(results, result)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func (r *myAnimeListRepository) PrefilterAnime(ctx context.Context, search string, limit int) ([]MyAnimeListSearchResult, error) {
+	const query = `
+SELECT
+	mal_id,
+	title,
+	title_english,
+	title_japanese,
+	similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) AS score
+FROM anime
+WHERE (
+	length(normalize_title($1)) < 3
+		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%'
+) OR normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) %% normalize_title($1)
+ORDER BY score DESC, mal_id
+LIMIT $2;
+`
+
+	rows, err := r.db.QueryContext(ctx, query, search, limit)
 	if err != nil {
 		return nil, err
 	}

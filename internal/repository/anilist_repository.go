@@ -13,7 +13,8 @@ type AniListRepository interface {
 	GetByID(ctx context.Context, id int) (model.AniListMedia, error)
 	List(ctx context.Context, filters AniListFilters, page, pageSize int) ([]model.AniListMedia, int, error)
 	Count(ctx context.Context, whereClause string, args []any) (int, error)
-	SearchMedia(ctx context.Context, searchTerm string) ([]SearchMediaResult, error)
+	SearchMedia(ctx context.Context, searchTerm string, limit int) ([]SearchMediaResult, error)
+	PrefilterMedia(ctx context.Context, search string, limit int) ([]SearchMediaResult, error)
 }
 
 type SearchMediaResult struct {
@@ -110,8 +111,8 @@ func (r *aniListRepository) buildFilterQuery(filters AniListFilters) (*QueryBuil
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		searchArgPos = qb.AddArg(search)
 		condition := fmt.Sprintf(
-			"((length(normalize_title($%d)) < 3 AND normalized_title ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR similarity(normalized_title, normalize_title($%d)) >= %.2f)",
-			searchArgPos, searchArgPos, searchArgPos, 0.30)
+			"((length(normalize_title($%d)) < 3 AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR (normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) %% normalize_title($%d)))",
+			searchArgPos, searchArgPos, searchArgPos)
 		qb.AddRawCondition(condition)
 	}
 
@@ -164,7 +165,7 @@ func (r *aniListRepository) buildSelectQuery(whereClause string, searchArgPos, p
 
 func (r *aniListRepository) buildOrderClause(searchArgPos int) string {
 	if searchArgPos > 0 {
-		return fmt.Sprintf(" ORDER BY similarity(normalized_title, normalize_title($%d)) DESC, id", searchArgPos)
+		return fmt.Sprintf(" ORDER BY similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($%d)) DESC, id", searchArgPos)
 	}
 	return " ORDER BY id"
 }
@@ -204,7 +205,7 @@ func (r *aniListRepository) Count(ctx context.Context, whereClause string, args 
 	return total, nil
 }
 
-func (r *aniListRepository) SearchMedia(ctx context.Context, searchTerm string) ([]SearchMediaResult, error) {
+func (r *aniListRepository) SearchMedia(ctx context.Context, searchTerm string, limit int) ([]SearchMediaResult, error) {
 	const query = `
 SELECT
 	id,
@@ -214,13 +215,51 @@ SELECT
 FROM media
 WHERE (
 	length(normalize_title($1)) < 3
-		AND normalized_title ILIKE '%' || normalize_title($1) || '%'
-) OR normalized_title % normalize_title($1)
-ORDER BY similarity(normalized_title, normalize_title($1)) DESC, id
-LIMIT 5;
+		AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%' || normalize_title($1) || '%'
+) OR normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) %% normalize_title($1)
+ORDER BY similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) DESC, id
+LIMIT $2;
 `
 
-	rows, err := r.db.QueryContext(ctx, query, searchTerm)
+	rows, err := r.db.QueryContext(ctx, query, searchTerm, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []SearchMediaResult
+	for rows.Next() {
+		var result SearchMediaResult
+		if err := rows.Scan(&result.ID, &result.TitleRomaji, &result.TitleEnglish, &result.TitleNative); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func (r *aniListRepository) PrefilterMedia(ctx context.Context, search string, limit int) ([]SearchMediaResult, error) {
+	const query = `
+SELECT
+	id,
+	title_romaji,
+	title_english,
+	title_native
+FROM media
+WHERE (
+	length(normalize_title($1)) < 3
+		AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%' || normalize_title($1) || '%'
+) OR normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) %% normalize_title($1)
+ORDER BY similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) DESC, id
+LIMIT $2;
+`
+
+	rows, err := r.db.QueryContext(ctx, query, search, limit)
 	if err != nil {
 		return nil, err
 	}
