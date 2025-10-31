@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"animedb/internal/http/response"
 	"animedb/internal/repository"
 	"animedb/internal/service"
+	"animedb/internal/util"
 )
 
 type RealtimeSearchHandlers struct {
@@ -67,7 +69,7 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 
 	var results []RealtimeSearchResult
 
-	if source == "both" || source == "anilist" {
+	if source == "anilist" {
 		anilistResults, err := service.HandleImprovedAniListSearch(ctx, h.anilistRepo, query, limit)
 		if err == nil {
 			for _, r := range anilistResults {
@@ -82,9 +84,7 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 				})
 			}
 		}
-	}
-
-	if source == "both" || source == "myanimelist" {
+	} else if source == "myanimelist" {
 		malResults, err := service.HandleImprovedMyAnimeListSearch(ctx, h.malRepo, query, limit)
 		if err == nil {
 			for _, r := range malResults {
@@ -99,11 +99,91 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 				})
 			}
 		}
-	}
-
-	if len(results) > limit {
-		results = results[:limit]
+	} else {
+		results = h.searchBothSources(ctx, query, limit)
 	}
 
 	response.WriteJSON(w, http.StatusOK, results)
+}
+
+func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query string, limit int) []RealtimeSearchResult {
+	querySeason, hasQuerySeason := util.ExtractSeasonNumber(query)
+	baseQuery := util.RemoveSeasonFromQuery(query)
+
+	searchTerm := baseQuery
+	if !hasQuerySeason {
+		searchTerm = query
+	}
+
+	var allCandidates []*service.Document
+
+	anilistPrefiltered, err := h.anilistRepo.PrefilterMedia(ctx, searchTerm, 100)
+	if err == nil {
+		for _, result := range anilistPrefiltered {
+			combinedTitle := result.TitleRomaji.String + " " + result.TitleEnglish.String + " " + result.TitleNative.String
+			tokens := service.TokenizePublic(combinedTitle)
+			ngramTokens := service.GenerateAllNGramsPublic(tokens, 3)
+			season, _ := util.ExtractSeasonNumber(combinedTitle)
+
+			doc := &service.Document{
+				ID:           result.ID,
+				Text:         combinedTitle,
+				Tokens:       ngramTokens,
+				TitleRomaji:  result.TitleRomaji.String,
+				TitleEnglish: result.TitleEnglish.String,
+				TitleNative:  result.TitleNative.String,
+				SeasonNumber: season,
+				Source:       "anilist",
+			}
+			allCandidates = append(allCandidates, doc)
+		}
+	}
+
+	malPrefiltered, err := h.malRepo.PrefilterAnime(ctx, searchTerm, 100)
+	if err == nil {
+		for _, result := range malPrefiltered {
+			combinedTitle := result.Title.String + " " + result.TitleEnglish.String + " " + result.TitleJapanese.String
+			tokens := service.TokenizePublic(combinedTitle)
+			ngramTokens := service.GenerateAllNGramsPublic(tokens, 3)
+			season, _ := util.ExtractSeasonNumber(combinedTitle)
+
+			doc := &service.Document{
+				ID:           result.ID,
+				Text:         combinedTitle,
+				Tokens:       ngramTokens,
+				TitleRomaji:  result.Title.String,
+				TitleEnglish: result.TitleEnglish.String,
+				TitleNative:  result.TitleJapanese.String,
+				SeasonNumber: season,
+				Source:       "myanimelist",
+			}
+			allCandidates = append(allCandidates, doc)
+		}
+	}
+
+	if len(allCandidates) == 0 {
+		return []RealtimeSearchResult{}
+	}
+
+	engine := service.NewBM25SearchEngine()
+	topDocs := engine.RankTopK(query, allCandidates, querySeason, hasQuerySeason, limit)
+
+	var results []RealtimeSearchResult
+	for _, doc := range topDocs {
+		results = append(results, RealtimeSearchResult{
+			ID:      doc.ID,
+			Title:   firstNonEmpty(doc.TitleEnglish, doc.TitleRomaji, doc.TitleNative),
+			Romaji:  doc.TitleRomaji,
+			English: doc.TitleEnglish,
+			Native:  doc.TitleNative,
+			Source:  doc.Source,
+			Score:   doc.Score,
+		})
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	return results
 }
