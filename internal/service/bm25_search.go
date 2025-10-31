@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -141,6 +142,22 @@ func (e *BM25SearchEngine) RankCandidates(ctx context.Context, query string, can
 		return nil
 	}
 
+	topK := e.RankTopK(query, candidates, querySeason, hasQuerySeason, 1)
+	if len(topK) == 0 {
+		return nil
+	}
+	return topK[0]
+}
+
+func (e *BM25SearchEngine) RankTopK(query string, candidates []*Document, querySeason int, hasQuerySeason bool, k int) []*Document {
+	if len(candidates) == 0 {
+		return []*Document{}
+	}
+
+	if k <= 0 {
+		k = 1
+	}
+
 	var totalLength float64
 	for _, doc := range candidates {
 		totalLength += float64(len(doc.Tokens))
@@ -152,12 +169,15 @@ func (e *BM25SearchEngine) RankCandidates(ctx context.Context, query string, can
 	queryTokens := tokenize(query)
 	queryNGrams := generateAllNGrams(queryTokens, 3)
 
-	var bestDoc *Document
-	bestScore := -1.0
+	type rankedDoc struct {
+		doc   *Document
+		score float64
+	}
+
+	var ranked []rankedDoc
 
 	for _, doc := range candidates {
 		bm25Score := e.calculateBM25Score(queryNGrams, doc)
-
 		score := bm25Score / 10.0
 
 		if hasQuerySeason && doc.SeasonNumber > 0 {
@@ -168,12 +188,21 @@ func (e *BM25SearchEngine) RankCandidates(ctx context.Context, query string, can
 			}
 		}
 
-		if score > bestScore {
-			bestScore = score
-			bestDoc = doc
-		}
+		ranked = append(ranked, rankedDoc{doc: doc, score: score})
 	}
 
-	return bestDoc
+	sort.Slice(ranked, func(i, j int) bool {
+		return ranked[i].score > ranked[j].score
+	})
+
+	var result []*Document
+	for i, rd := range ranked {
+		if i >= k {
+			break
+		}
+		result = append(result, rd.doc)
+	}
+
+	return result
 }
 
