@@ -31,6 +31,7 @@ type Document struct {
 	TitleNative  string
 	SeasonNumber int
 	Score        float64
+	Source       string
 }
 
 func NewBM25SearchEngine() *BM25SearchEngine {
@@ -60,6 +61,10 @@ func tokenize(text string) []string {
 	return tokens
 }
 
+func TokenizePublic(text string) []string {
+	return tokenize(text)
+}
+
 func generateNGrams(tokens []string, n int) []string {
 	if len(tokens) < n {
 		return []string{strings.Join(tokens, " ")}
@@ -84,6 +89,10 @@ func generateAllNGrams(tokens []string, maxN int) []string {
 	}
 
 	return allNGrams
+}
+
+func GenerateAllNGramsPublic(tokens []string, maxN int) []string {
+	return generateAllNGrams(tokens, maxN)
 }
 
 func (e *BM25SearchEngine) calculateBM25IDF(documents []*Document) {
