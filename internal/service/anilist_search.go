@@ -6,10 +6,11 @@ import (
 	"fmt"
 
 	"animedb/internal/model"
+	"animedb/internal/repository"
 	"animedb/internal/util"
 )
 
-func HandleImprovedAniListSearch(ctx context.Context, db *sql.DB, search string) ([]model.SearchResultWithMetadata, error) {
+func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRepository, search string) ([]model.SearchResultWithMetadata, error) {
 	querySeason, hasQuerySeason := util.ExtractSeasonNumber(search)
 	baseQuery := util.RemoveSeasonFromQuery(search)
 
@@ -18,67 +19,57 @@ func HandleImprovedAniListSearch(ctx context.Context, db *sql.DB, search string)
 		searchTerm = search
 	}
 
-	const query = `
-SELECT
-	id,
-	title_romaji,
-	title_english,
-	title_native,
-	similarity(normalized_title, normalize_title($1)) AS score
-FROM media
-WHERE (
-	length(normalize_title($1)) < 3
-		AND normalized_title ILIKE '%' || normalize_title($1) || '%'
-) OR normalized_title % normalize_title($1)
-ORDER BY score DESC, id
-LIMIT 20; -- Get more results for filtering
-`
-
-	rows, err := db.QueryContext(ctx, query, searchTerm)
+	results, err := repo.SearchMedia(ctx, searchTerm)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var results []model.SearchResultWithMetadata
-	for rows.Next() {
-		var r model.SearchResultWithMetadata
-		if err := rows.Scan(&r.ID, &r.TitleRomaji, &r.TitleEnglish, &r.TitleNative, &r.Score); err != nil {
-			return nil, err
-		}
-
+	var candidates []*Document
+	for _, result := range results {
 		combinedTitle := fmt.Sprintf("%s %s %s",
-			r.TitleRomaji.String, r.TitleEnglish.String, r.TitleNative.String)
-		resultSeason, hasResultSeason := util.ExtractSeasonNumber(combinedTitle)
+			result.TitleRomaji.String, result.TitleEnglish.String, result.TitleNative.String)
 
-		if hasResultSeason {
-			r.SeasonNumber = resultSeason
+		tokens := tokenize(combinedTitle)
+		ngramTokens := generateAllNGrams(tokens, 3)
+
+		season, _ := util.ExtractSeasonNumber(combinedTitle)
+
+		doc := &Document{
+			ID:           result.ID,
+			Text:         combinedTitle,
+			Tokens:       ngramTokens,
+			TitleRomaji:  result.TitleRomaji.String,
+			TitleEnglish: result.TitleEnglish.String,
+			TitleNative:  result.TitleNative.String,
+			SeasonNumber: season,
 		}
 
-		if hasQuerySeason && hasResultSeason {
-			r.HasSeasonMatch = (querySeason == resultSeason)
-
-			if r.HasSeasonMatch {
-				r.Score += 0.3
-			} else {
-				r.Score -= 0.2
-			}
-		} else if hasQuerySeason && !hasResultSeason {
-			r.Score -= 0.1
-		}
-
-		results = append(results, r)
+		candidates = append(candidates, doc)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if len(candidates) == 0 {
+		return []model.SearchResultWithMetadata{}, nil
 	}
 
-	util.SortByScore(results)
+	engine := NewBM25SearchEngine()
+	bestDoc := engine.RankCandidates(ctx, search, candidates, querySeason, hasQuerySeason)
 
-	if len(results) > 5 {
-		results = results[:5]
+	if bestDoc == nil {
+		return []model.SearchResultWithMetadata{}, nil
 	}
 
-	return results, nil
+	result := model.SearchResultWithMetadata{
+		ID:           bestDoc.ID,
+		TitleRomaji:  sql.NullString{String: bestDoc.TitleRomaji, Valid: bestDoc.TitleRomaji != ""},
+		TitleEnglish: sql.NullString{String: bestDoc.TitleEnglish, Valid: bestDoc.TitleEnglish != ""},
+		TitleNative:  sql.NullString{String: bestDoc.TitleNative, Valid: bestDoc.TitleNative != ""},
+		SeasonNumber: bestDoc.SeasonNumber,
+		Score:        1.0,
+	}
+
+	if hasQuerySeason && bestDoc.SeasonNumber > 0 {
+		result.HasSeasonMatch = (querySeason == bestDoc.SeasonNumber)
+	}
+
+	return []model.SearchResultWithMetadata{result}, nil
 }
