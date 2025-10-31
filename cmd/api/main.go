@@ -118,8 +118,11 @@ func main() {
 		log.Fatalf("ensure MyAnimeList search helpers: %v", err)
 	}
 
-	aniHandlers := handlers.NewAniListHandlers(aniDB)
-	// TODO: myAnimeListHandlers := handlers.NewMyAnimeListHandlers(malDB)
+	aniRepo := repository.NewAniListRepository(aniDB)
+	malRepo := repository.NewMyAnimeListRepository(malDB)
+
+	aniHandlers := handlers.NewAniListHandlers(aniRepo)
+	myAnimeListHandlers := handlers.NewMyAnimeListHandlers(malRepo)
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -138,7 +141,11 @@ func main() {
 		r.Get("/media/{id}", aniHandlers.MediaGet)
 	})
 
-	// TODO: Add MyAnimeList routes
+	router.Route("/myanimelist", func(r chi.Router) {
+		r.Get("/anime/search", myAnimeListHandlers.MediaSearch)
+		r.Get("/anime", myAnimeListHandlers.MediaList)
+		r.Get("/anime/{id}", myAnimeListHandlers.MediaGet)
+	})
 
 	httpServer := &http.Server{
 		Addr:              listenAddr,

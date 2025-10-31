@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"animedb/internal/http/handlers"
-
+	"animedb/internal/http/response"
 	"animedb/internal/model"
+	"animedb/internal/repository"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
@@ -37,7 +38,8 @@ func TestAniListMediaList(t *testing.T) {
 		}
 	}()
 
-	aniHandlers := handlers.NewAniListHandlers(aniDB)
+	aniRepo := repository.NewAniListRepository(aniDB)
+	aniHandlers := handlers.NewAniListHandlers(aniRepo)
 	router := chi.NewRouter()
 	router.Get("/anilist/media", aniHandlers.MediaList)
 
@@ -80,7 +82,7 @@ func TestAniListMediaList(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var payload handlers.ListResponse[model.AniListMedia]
+	var payload response.ListResponse[model.AniListMedia]
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -111,7 +113,8 @@ func TestAniListMediaListTitleFilters(t *testing.T) {
 		}
 	}()
 
-	aniHandlers := handlers.NewAniListHandlers(aniDB)
+	aniRepo := repository.NewAniListRepository(aniDB)
+	aniHandlers := handlers.NewAniListHandlers(aniRepo)
 	router := chi.NewRouter()
 	router.Get("/anilist/media", aniHandlers.MediaList)
 
@@ -171,7 +174,8 @@ func TestAniListMediaGetNotFound(t *testing.T) {
 		}
 	}()
 
-	aniHandlers := handlers.NewAniListHandlers(aniDB)
+	aniRepo := repository.NewAniListRepository(aniDB)
+	aniHandlers := handlers.NewAniListHandlers(aniRepo)
 	router := chi.NewRouter()
 	router.Get("/anilist/media/{id}", aniHandlers.MediaGet)
 
@@ -202,8 +206,10 @@ func TestMyAnimeListAnimeList(t *testing.T) {
 		}
 	}()
 
-	// MyAnimeList handler setup removed
+	malRepo := repository.NewMyAnimeListRepository(malDB)
+	malHandlers := handlers.NewMyAnimeListHandlers(malRepo)
 	router := chi.NewRouter()
+	router.Get("/myanimelist/anime", malHandlers.MediaList)
 
 	malMock.ExpectQuery(`SELECT\s+COUNT\(\*\)\s+FROM\s+anime`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -249,7 +255,7 @@ func TestMyAnimeListAnimeList(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var payload handlers.ListResponse[model.AniListMedia]
+	var payload response.ListResponse[model.MyAnimeListAnime]
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -271,8 +277,10 @@ func TestMyAnimeListGetNotFound(t *testing.T) {
 	malDB, malMock := newMockDB(t)
 	defer malDB.Close()
 
-	// MyAnimeList handler setup removed
+	malRepo := repository.NewMyAnimeListRepository(malDB)
+	malHandlers := handlers.NewMyAnimeListHandlers(malRepo)
 	router := chi.NewRouter()
+	router.Get("/myanimelist/anime/{id}", malHandlers.MediaGet)
 
 	malMock.ExpectQuery(`(?s)SELECT\s+mal_id.*FROM\s+anime.*WHERE mal_id = \$1`).
 		WithArgs(12345).
