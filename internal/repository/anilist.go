@@ -21,15 +21,7 @@ func EnsureAniListSearchHelpers(ctx context.Context, db *sql.DB, normalizeTitleF
 	}
 	if exists {
 		statements = append(statements,
-			`ALTER TABLE IF EXISTS media
-	ADD COLUMN IF NOT EXISTS normalized_title TEXT GENERATED ALWAYS AS (
-		normalize_title(
-			COALESCE(title_romaji, '') || ' ' ||
-			COALESCE(title_english, '') || ' ' ||
-			COALESCE(title_native, '')
-		)
-	) STORED;`,
-			`CREATE INDEX IF NOT EXISTS media_normalized_title_trgm_idx ON media USING gin (normalized_title gin_trgm_ops);`,
+			`CREATE INDEX IF NOT EXISTS media_title_trgm_idx ON media USING gin ( normalize_title(COALESCE(title_romaji,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_native,'')) gin_trgm_ops );`,
 		)
 	}
 	return ensureSchemas(schemaCtx, db, statements)
