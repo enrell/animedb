@@ -191,7 +191,7 @@ FROM anime
 WHERE 
 	(length(normalize_title($1)) < 3
 		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%')
-	OR similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) > 0.3
+	OR similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) > 0.1
 ORDER BY score DESC, mal_id
 LIMIT $2;
 `
@@ -232,7 +232,7 @@ FROM anime
 WHERE 
 	(length(normalize_title($1)) < 3
 		AND (COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')) ILIKE '%' || normalize_title($1) || '%')
-	OR similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) > 0.3
+	OR similarity(normalize_title(COALESCE(title,'')||' '||COALESCE(title_english,'')||' '||COALESCE(title_japanese,'')), normalize_title($1)) > 0.1
 ORDER BY score DESC, mal_id
 LIMIT $2;
 `

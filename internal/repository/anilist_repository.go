@@ -111,7 +111,7 @@ func (r *aniListRepository) buildFilterQuery(filters AniListFilters) (*QueryBuil
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		searchArgPos = qb.AddArg(search)
 		condition := fmt.Sprintf(
-			"((length(normalize_title($%d)) < 3 AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($%d)) > 0.3)",
+			"((length(normalize_title($%d)) < 3 AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%%%%' || normalize_title($%d) || '%%%%') OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($%d)) > 0.1)",
 			searchArgPos, searchArgPos, searchArgPos)
 		qb.AddRawCondition(condition)
 	}
@@ -216,7 +216,7 @@ FROM media
 WHERE 
 	(length(normalize_title($1)) < 3
 		AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%' || normalize_title($1) || '%')
-	OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) > 0.3
+	OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) > 0.1
 ORDER BY similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) DESC, id
 LIMIT $2;
 `
@@ -254,7 +254,7 @@ FROM media
 WHERE 
 	(length(normalize_title($1)) < 3
 		AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%' || normalize_title($1) || '%')
-	OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) > 0.3
+	OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) > 0.1
 ORDER BY similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) DESC, id
 LIMIT $2;
 `
