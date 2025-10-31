@@ -23,6 +23,7 @@ const (
 	defaultListenAddr         = ":8081"
 	defaultAniListDSN         = "postgres://root:root@localhost:5432/anilist?sslmode=disable"
 	defaultMyAnimeListDSN     = "postgres://root:root@localhost:5432/myanimelist?sslmode=disable"
+	defaultVideosDSN          = "postgres://root:root@localhost:5432/videos?sslmode=disable"
 	queryTimeout              = 15 * time.Second
 	normalizeTitleFunctionSQL = `
 CREATE OR REPLACE FUNCTION normalize_title(input TEXT)
@@ -69,12 +70,16 @@ func main() {
 		adminDSN       string
 		anilistDSN     string
 		myAnimeListDSN string
+		videosDSN      string
+		scanPath       string
 	)
 
 	flag.StringVar(&listenAddr, "listen", defaultListenAddr, "HTTP listen address")
 	flag.StringVar(&adminDSN, "admin-dsn", "postgres://root:root@localhost:5432/root?sslmode=disable", "Admin Postgres DSN used to ensure target databases exist")
 	flag.StringVar(&anilistDSN, "anilist-dsn", defaultAniListDSN, "Postgres DSN for the AniList database")
 	flag.StringVar(&myAnimeListDSN, "myanimelist-dsn", defaultMyAnimeListDSN, "Postgres DSN for the MyAnimeList database")
+	flag.StringVar(&videosDSN, "videos-dsn", defaultVideosDSN, "Postgres DSN for the videos database")
+	flag.StringVar(&scanPath, "scan-path", "", "Root directory to scan for video files (optional)")
 	flag.Parse()
 
 	args := flag.Args()
@@ -101,6 +106,11 @@ func main() {
 		log.Fatalf("prepare MyAnimeList database: %v", err)
 	}
 
+	vidTargetDSN, err := ensureDSN(ctx, adminDSN, videosDSN, "videos")
+	if err != nil {
+		log.Fatalf("prepare videos database: %v", err)
+	}
+
 	aniDB, err := openAndPing(aniTargetDSN)
 	if err != nil {
 		log.Fatalf("connect AniList database: %v", err)
@@ -119,12 +129,23 @@ func main() {
 		log.Fatalf("ensure MyAnimeList search helpers: %v", err)
 	}
 
+	vidDB, err := openAndPing(vidTargetDSN)
+	if err != nil {
+		log.Fatalf("connect videos database: %v", err)
+	}
+	defer vidDB.Close()
+	if err := repository.EnsureVideosSearchHelpers(context.Background(), vidDB, normalizeTitleFunctionSQL); err != nil {
+		log.Fatalf("ensure videos search helpers: %v", err)
+	}
+
 	aniRepo := repository.NewAniListRepository(aniDB)
 	malRepo := repository.NewMyAnimeListRepository(malDB)
+	vidRepo := repository.NewVideoRepository(vidDB)
 
 	aniHandlers := handlers.NewAniListHandlers(aniRepo)
 	myAnimeListHandlers := handlers.NewMyAnimeListHandlers(malRepo)
 	realtimeHandlers := handlers.NewRealtimeSearchHandlers(aniRepo, malRepo)
+	videoHandlers := handlers.NewVideoHandlers(vidRepo)
 
 	rateLimiter := custommiddleware.NewRateLimiter(100)
 
@@ -153,6 +174,17 @@ func main() {
 		r.Get("/anime/search", myAnimeListHandlers.MediaSearch)
 		r.Get("/anime", myAnimeListHandlers.MediaList)
 		r.Get("/anime/{id}", myAnimeListHandlers.MediaGet)
+	})
+
+	router.Route("/videos", func(r chi.Router) {
+		r.Get("/anime", videoHandlers.AnimeList)
+		r.Get("/anime/{id}", videoHandlers.AnimeGet)
+		r.Get("/anime/{id}/episodes", videoHandlers.EpisodesList)
+		r.Get("/episodes/{id}", videoHandlers.EpisodeGet)
+		r.Get("/episodes/{id}/thumbnails", videoHandlers.ThumbnailsList)
+		r.Get("/search", videoHandlers.Search)
+		r.Post("/scan", videoHandlers.TriggerScan)
+		r.Get("/scan/status", videoHandlers.ScanStatus)
 	})
 
 	httpServer := &http.Server{
