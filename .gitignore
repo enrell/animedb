@@ -1,0 +1,21 @@
+# Build artifacts
+api
+/api
+/cmd/anilist/anilist
+/cmd/myanimelist/myanimelist
+/cmd/test-ingest/test-ingest
+
+# IDE and editor files
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+vendor/
