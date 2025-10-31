@@ -110,3 +110,32 @@ Search endpoints return an array of objects with the matched identifier, title v
 ```
 
 Detail endpoints return a single record with fields mirroring the Postgres schema (see `cmd/anilist/main.go` and `cmd/myanimelist/main.go` for full column-to-field mappings).
+
+## Example Requests
+
+**AniList search:**
+```bash
+curl 'http://localhost:8081/anilist/media/search?search=slime'
+```
+
+**MyAnimeList paginated list:**
+```bash
+curl 'http://localhost:8081/myanimelist/anime?page=2&page_size=10&type=TV'
+```
+
+**AniList detail:**
+```bash
+curl 'http://localhost:8081/anilist/media/1535'
+```
+
+## Error Responses
+
+Errors are returned as JSON with an HTTP status code and a message:
+
+```jsonc
+{
+  "error": "not found"
+}
+```
+
+400-level errors indicate invalid input; 500-level errors indicate server issues.
