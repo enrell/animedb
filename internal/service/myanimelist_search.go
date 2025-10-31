@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"animedb/internal/repository"
+	"animedb/internal/util"
 )
 
 type MyAnimeListSearchResult struct {
@@ -19,7 +20,15 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 		k = 1
 	}
 
-	prefiltered, err := repo.PrefilterAnime(ctx, search, 100)
+	querySeason, hasQuerySeason := util.ExtractSeasonNumber(search)
+	baseQuery := util.RemoveSeasonFromQuery(search)
+
+	searchTerm := baseQuery
+	if !hasQuerySeason {
+		searchTerm = search
+	}
+
+	prefiltered, err := repo.PrefilterAnime(ctx, searchTerm, 100)
 	if err != nil {
 		return nil, err
 	}
@@ -31,6 +40,8 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 		tokens := tokenize(combinedTitle)
 		ngramTokens := generateAllNGrams(tokens, 3)
 
+		season, _ := util.ExtractSeasonNumber(combinedTitle)
+
 		doc := &Document{
 			ID:           result.ID,
 			Text:         combinedTitle,
@@ -38,7 +49,7 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 			TitleRomaji:  result.Title.String,
 			TitleEnglish: result.TitleEnglish.String,
 			TitleNative:  result.TitleJapanese.String,
-			SeasonNumber: 0,
+			SeasonNumber: season,
 		}
 
 		candidates = append(candidates, doc)
@@ -49,7 +60,7 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 	}
 
 	engine := NewBM25SearchEngine()
-	topDocs := engine.RankTopK(search, candidates, 0, false, k)
+	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, k)
 
 	if len(topDocs) == 0 {
 		return []MyAnimeListSearchResult{}, nil
