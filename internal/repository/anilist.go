@@ -11,13 +11,20 @@ func EnsureAniListSearchHelpers(ctx context.Context, db *sql.DB, normalizeTitleF
 	schemaCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	
-	baseStatements := []string{
+	extensionStatements := []string{
 		`CREATE EXTENSION IF NOT EXISTS unaccent;`,
 		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
+	}
+	
+	if err := ensureSchemas(schemaCtx, db, extensionStatements); err != nil {
+		return err
+	}
+	
+	functionStatements := []string{
 		normalizeTitleFunctionSQL,
 	}
 	
-	if err := ensureSchemas(schemaCtx, db, baseStatements); err != nil {
+	if err := ensureSchemas(schemaCtx, db, functionStatements); err != nil {
 		return err
 	}
 	

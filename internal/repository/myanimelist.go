@@ -11,13 +11,20 @@ func EnsureMyAnimeListSearchHelpers(ctx context.Context, db *sql.DB, normalizeTi
 	schemaCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	
-	baseStatements := []string{
+	extensionStatements := []string{
 		`CREATE EXTENSION IF NOT EXISTS unaccent;`,
 		`CREATE EXTENSION IF NOT EXISTS pg_trgm;`,
+	}
+	
+	if err := EnsureSchemas(schemaCtx, db, extensionStatements); err != nil {
+		return err
+	}
+	
+	functionStatements := []string{
 		normalizeTitleFunctionSQL,
 	}
 	
-	if err := EnsureSchemas(schemaCtx, db, baseStatements); err != nil {
+	if err := EnsureSchemas(schemaCtx, db, functionStatements); err != nil {
 		return err
 	}
 	
@@ -43,12 +50,13 @@ func TableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
 SELECT EXISTS (
 	SELECT 1
 	FROM information_schema.tables
-	WHERE table_schema = current_schema()
-		AND table_name = $1
-);`
+	WHERE table_schema = 'public'
+	  AND table_name = $1
+);
+`
 	var exists bool
 	if err := db.QueryRowContext(ctx, q, table).Scan(&exists); err != nil {
-		return false, err
+		return false, fmt.Errorf("check table exists: %w", err)
 	}
 	return exists, nil
 }
