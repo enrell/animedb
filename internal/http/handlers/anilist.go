@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"animedb/internal/cache"
 	"animedb/internal/http/response"
 	"animedb/internal/model"
 	"animedb/internal/repository"
@@ -19,11 +22,19 @@ import (
 const queryTimeout = 15 * time.Second
 
 type AniListHandlers struct {
-	repo repository.AniListRepository
+	repo  repository.AniListRepository
+	cache *cache.LRUCache
 }
 
 func NewAniListHandlers(repo repository.AniListRepository) *AniListHandlers {
-	return &AniListHandlers{repo: repo}
+	return &AniListHandlers{
+		repo:  repo,
+		cache: cache.NewLRUCache(1000, 5*time.Minute),
+	}
+}
+
+func NewAniListHandlersWithCache(repo repository.AniListRepository, c *cache.LRUCache) *AniListHandlers {
+	return &AniListHandlers{repo: repo, cache: c}
 }
 
 func (h *AniListHandlers) MediaList(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +119,14 @@ func (h *AniListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
+	cacheKey := buildCacheKey("anilist", search, limit)
+	if cached, ok := h.cache.Get(cacheKey); ok {
+		if results, ok := cached.([]model.SearchResult); ok {
+			response.WriteJSON(w, http.StatusOK, results)
+			return
+		}
+	}
+
 	resultsWithMeta, err := service.HandleImprovedAniListSearch(ctx, h.repo, search, limit)
 	if err != nil {
 		response.WriteError(w, http.StatusInternalServerError, err)
@@ -127,6 +146,7 @@ func (h *AniListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request) {
 		results = append(results, res)
 	}
 
+	h.cache.Set(cacheKey, results)
 	response.WriteJSON(w, http.StatusOK, results)
 }
 
@@ -137,4 +157,10 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func buildCacheKey(source, query string, limit int) string {
+	key := fmt.Sprintf("%s:%s:%d", source, strings.ToLower(strings.TrimSpace(query)), limit)
+	hash := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(hash[:])
 }

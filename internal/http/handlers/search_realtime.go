@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"animedb/internal/cache"
 	"animedb/internal/http/response"
 	"animedb/internal/repository"
 	"animedb/internal/service"
@@ -18,12 +19,22 @@ import (
 type RealtimeSearchHandlers struct {
 	anilistRepo repository.AniListRepository
 	malRepo     repository.MyAnimeListRepository
+	cache       *cache.LRUCache
 }
 
 func NewRealtimeSearchHandlers(anilistRepo repository.AniListRepository, malRepo repository.MyAnimeListRepository) *RealtimeSearchHandlers {
 	return &RealtimeSearchHandlers{
 		anilistRepo: anilistRepo,
 		malRepo:     malRepo,
+		cache:       cache.NewLRUCache(1000, 5*time.Minute),
+	}
+}
+
+func NewRealtimeSearchHandlersWithCache(anilistRepo repository.AniListRepository, malRepo repository.MyAnimeListRepository, c *cache.LRUCache) *RealtimeSearchHandlers {
+	return &RealtimeSearchHandlers{
+		anilistRepo: anilistRepo,
+		malRepo:     malRepo,
+		cache:       c,
 	}
 }
 
@@ -67,6 +78,14 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	cacheKey := buildCacheKey("realtime", fmt.Sprintf("%s:%s", query, source), limit)
+	if cached, ok := h.cache.Get(cacheKey); ok {
+		if results, ok := cached.([]RealtimeSearchResult); ok {
+			response.WriteJSON(w, http.StatusOK, results)
+			return
+		}
+	}
+
 	var results []RealtimeSearchResult
 
 	if source == "anilist" {
@@ -103,6 +122,7 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 		results = h.searchBothSources(ctx, query, limit)
 	}
 
+	h.cache.Set(cacheKey, results)
 	response.WriteJSON(w, http.StatusOK, results)
 }
 

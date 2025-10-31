@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"animedb/internal/cache"
 	"animedb/internal/http/response"
 	"animedb/internal/model"
 	"animedb/internal/repository"
@@ -17,11 +18,19 @@ import (
 )
 
 type MyAnimeListHandlers struct {
-	repo repository.MyAnimeListRepository
+	repo  repository.MyAnimeListRepository
+	cache *cache.LRUCache
 }
 
 func NewMyAnimeListHandlers(repo repository.MyAnimeListRepository) *MyAnimeListHandlers {
-	return &MyAnimeListHandlers{repo: repo}
+	return &MyAnimeListHandlers{
+		repo:  repo,
+		cache: cache.NewLRUCache(1000, 5*time.Minute),
+	}
+}
+
+func NewMyAnimeListHandlersWithCache(repo repository.MyAnimeListRepository, c *cache.LRUCache) *MyAnimeListHandlers {
+	return &MyAnimeListHandlers{repo: repo, cache: c}
 }
 
 func (h *MyAnimeListHandlers) MediaList(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +112,14 @@ func (h *MyAnimeListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request
 		limit = 50
 	}
 
+	cacheKey := buildCacheKey("myanimelist", search, limit)
+	if cached, ok := h.cache.Get(cacheKey); ok {
+		if results, ok := cached.([]searchResult); ok {
+			response.WriteJSON(w, http.StatusOK, results)
+			return
+		}
+	}
+
 	results, err := service.HandleImprovedMyAnimeListSearch(ctx, h.repo, search, limit)
 	if err != nil {
 		response.WriteError(w, http.StatusInternalServerError, err)
@@ -121,6 +138,7 @@ func (h *MyAnimeListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request
 		searchResults = append(searchResults, result)
 	}
 
+	h.cache.Set(cacheKey, searchResults)
 	response.WriteJSON(w, http.StatusOK, searchResults)
 }
 
