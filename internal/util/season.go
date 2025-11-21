@@ -24,6 +24,24 @@ func ExtractSeasonNumber(query string) (int, bool) {
 	return 0, false
 }
 
+func ExtractPartNumber(query string) (int, bool) {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(\d+)(?:st|nd|rd|th)?\s*part`),
+		regexp.MustCompile(`(?i)part\s*(\d+)`),
+		regexp.MustCompile(`(?i)\bp(\d+)\b`),
+		regexp.MustCompile(`(?i)(\d+)(?:st|nd|rd|th)?\s*クール`),
+	}
+
+	for _, re := range patterns {
+		if matches := re.FindStringSubmatch(query); len(matches) > 1 {
+			if num, err := strconv.Atoi(matches[1]); err == nil {
+				return num, true
+			}
+		}
+	}
+	return 0, false
+}
+
 func RemoveSeasonFromQuery(query string) string {
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\b(\d+)(?:st|nd|rd|th)?\s*season\b`),

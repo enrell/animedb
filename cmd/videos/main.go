@@ -41,6 +41,7 @@ var schemaStatements = []string{
 		id SERIAL PRIMARY KEY,
 		title TEXT NOT NULL,
 		folder_path TEXT NOT NULL UNIQUE,
+		cover_image_url TEXT,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);`,
@@ -69,11 +70,29 @@ var schemaStatements = []string{
 		timestamp_sec DOUBLE PRECISION NOT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);`,
+	`CREATE TABLE IF NOT EXISTS libraries (
+		id SERIAL PRIMARY KEY,
+		path TEXT NOT NULL UNIQUE,
+		name TEXT,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);`,
+	`CREATE TABLE IF NOT EXISTS settings (
+		id SERIAL PRIMARY KEY,
+		key TEXT NOT NULL UNIQUE,
+		value TEXT,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);`,
 	`CREATE INDEX IF NOT EXISTS anime_title_trgm_idx ON anime USING gin ( normalize_title(title) gin_trgm_ops );`,
+	`CREATE INDEX IF NOT EXISTS settings_key_idx ON settings (key);`,
 	`CREATE INDEX IF NOT EXISTS episodes_anime_id_idx ON episodes (anime_id);`,
 	`CREATE INDEX IF NOT EXISTS episodes_hash_idx ON episodes (hash);`,
 	`CREATE INDEX IF NOT EXISTS episodes_file_path_idx ON episodes (file_path);`,
 	`CREATE INDEX IF NOT EXISTS thumbnails_episode_id_idx ON thumbnails (episode_id);`,
+	`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'anime' AND column_name = 'cover_image_url') THEN ALTER TABLE anime ADD COLUMN cover_image_url TEXT; END IF; END $$;`,
+	`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'anime' AND column_name = 'anilist_id') THEN ALTER TABLE anime ADD COLUMN anilist_id INTEGER; END IF; END $$;`,
+	`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'anime' AND column_name = 'anilist_metadata') THEN ALTER TABLE anime ADD COLUMN anilist_metadata JSONB; END IF; END $$;`,
 }
 
 func main() {

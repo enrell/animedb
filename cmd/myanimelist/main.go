@@ -84,11 +84,12 @@ func main() {
 	defer stop()
 
 	var (
-		adminDSN  string
-		database  string
-		perPage   int
-		startPage int
-		maxPages  int
+		adminDSN     string
+		database     string
+		perPage      int
+		startPage    int
+		maxPages     int
+		skipIfSeeded bool
 	)
 
 	flag.StringVar(&adminDSN, "dsn", defaultAdminDSN, "Admin Postgres DSN that has privileges to create databases")
@@ -96,6 +97,7 @@ func main() {
 	flag.IntVar(&perPage, "per-page", 25, "Number of anime entries per request (max 25)")
 	flag.IntVar(&startPage, "start-page", 1, "Starting page")
 	flag.IntVar(&maxPages, "max-pages", 0, "Maximum pages to fetch (0 fetches all)")
+	flag.BoolVar(&skipIfSeeded, "skip-if-seeded", false, "Skip ingestion if the database is already seeded")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -113,6 +115,17 @@ func main() {
 
 	if err := postgres.EnsureSchemas(ctx, db, schemaStatements); err != nil {
 		log.Fatalf("ensure schema: %v", err)
+	}
+
+	if skipIfSeeded {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM anime").Scan(&count); err != nil {
+			log.Fatalf("check if seeded: %v", err)
+		}
+		if count > 0 {
+			log.Printf("Database %s is already seeded with %d records. Skipping ingestion.", database, count)
+			return
+		}
 	}
 
 	client := myanimelist.NewClient()

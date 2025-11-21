@@ -34,7 +34,7 @@ func TestHandleImprovedAniListSearch(t *testing.T) {
 			AddRow(1, "Tensei Shitara Slime Datta Ken", "That Time I Got Reincarnated as a Slime", "").
 			AddRow(2, "Slime Taoshite", "Slime Hunting", ""))
 
-	results, total, err := HandleImprovedAniListSearch(ctx, repo, "slime", 10)
+	results, total, err := HandleImprovedAniListSearch(ctx, repo, "slime", nil, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestHandleImprovedAniListSearch_SeasonAware(t *testing.T) {
 			AddRow(1, "Slime Season 1", "Slime Season 1", "").
 			AddRow(2, "Slime Season 2", "Slime Season 2", ""))
 
-	results, _, err := HandleImprovedAniListSearch(ctx, repo, "slime season 2", 10)
+	results, _, err := HandleImprovedAniListSearch(ctx, repo, "slime season 2", nil, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestHandleImprovedAniListSearch_EmptyResult(t *testing.T) {
 		WithArgs("nonexistent", 100).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "title_romaji", "title_english", "title_native"}))
 
-	results, total, err := HandleImprovedAniListSearch(ctx, repo, "nonexistent", 10)
+	results, total, err := HandleImprovedAniListSearch(ctx, repo, "nonexistent", nil, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestHandleImprovedAniListSearch_InvalidLimit(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "title_romaji", "title_english", "title_native"}).
 			AddRow(1, "Test", "Test", ""))
 
-	results, total, err := HandleImprovedAniListSearch(ctx, repo, "test", 0)
+	results, total, err := HandleImprovedAniListSearch(ctx, repo, "test", nil, 0)
 	if total < 0 {
 		t.Error("expected non-negative total")
 	}

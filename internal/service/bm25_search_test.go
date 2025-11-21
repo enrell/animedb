@@ -30,7 +30,7 @@ func TestBM25SearchEngine_RankTopK(t *testing.T) {
 		doc.Tokens = GenerateAllNGramsPublic(doc.Tokens, 3)
 	}
 
-	results := engine.RankTopK("attack titan", candidates, 0, false, 2)
+	results := engine.RankTopK("attack titan", candidates, 0, false, 0, false, "", false, 2)
 
 	if len(results) != 2 {
 		t.Errorf("expected 2 results, got %d", len(results))
@@ -69,7 +69,7 @@ func TestBM25SearchEngine_SeasonAwareness(t *testing.T) {
 		doc.Tokens = GenerateAllNGramsPublic(doc.Tokens, 3)
 	}
 
-	results := engine.RankTopK("slime season 2", candidates, 2, true, 3)
+	results := engine.RankTopK("slime season 2", candidates, 2, true, 0, false, "", false, 3)
 
 	if len(results) == 0 {
 		t.Fatal("expected at least one result")

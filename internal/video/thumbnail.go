@@ -74,3 +74,27 @@ func IsFFMpegAvailable() bool {
 	return err == nil
 }
 
+func ExtractCoverImage(videoPath string, outputPath string, timestamp float64) error {
+	if timestamp <= 0 {
+		timestamp = 60.0
+	}
+
+	timestampStr := strconv.FormatFloat(timestamp, 'f', 2, 64)
+
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-ss", timestampStr,
+		"-vframes", "1",
+		"-q:v", "2",
+		"-vf", "scale=400:-1",
+		"-y",
+		outputPath,
+	)
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg execution failed: %w", err)
+	}
+
+	return nil
+}
+

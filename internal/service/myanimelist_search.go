@@ -43,6 +43,7 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 		ngramTokens := generateAllNGrams(tokens, 3)
 
 		season, _ := util.ExtractSeasonNumber(combinedTitle)
+		part, _ := util.ExtractPartNumber(combinedTitle)
 
 		doc := &Document{
 			ID:           result.ID,
@@ -52,6 +53,7 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 			TitleEnglish: result.TitleEnglish.String,
 			TitleNative:  result.TitleJapanese.String,
 			SeasonNumber: season,
+			PartNumber:   part,
 		}
 
 		candidates = append(candidates, doc)
@@ -61,8 +63,9 @@ func HandleImprovedMyAnimeListSearch(ctx context.Context, repo repository.MyAnim
 		return []MyAnimeListSearchResult{}, 0, nil
 	}
 
+	queryPart, hasQueryPart := util.ExtractPartNumber(search)
 	engine := NewBM25SearchEngine()
-	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, k)
+	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, queryPart, hasQueryPart, "", false, k)
 
 	if len(topDocs) == 0 {
 		return []MyAnimeListSearchResult{}, totalCandidates, nil

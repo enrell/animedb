@@ -18,5 +18,6 @@ type SearchResultWithMetadata struct {
 	TitleNative    sql.NullString
 	Score          float64
 	SeasonNumber   int
+	PartNumber     int
 	HasSeasonMatch bool
 }

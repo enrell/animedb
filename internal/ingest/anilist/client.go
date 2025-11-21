@@ -17,7 +17,7 @@ import (
 const (
 	AniListEndpoint = "https://graphql.anilist.co"
 	GraphQLQuery    = `
-query ($page: Int, $perPage: Int, $type: MediaType) {
+query ($page: Int, $perPage: Int, $type: MediaType, $sort: [MediaSort]) {
   Page(page: $page, perPage: $perPage) {
     pageInfo {
       total
@@ -25,7 +25,7 @@ query ($page: Int, $perPage: Int, $type: MediaType) {
       currentPage
       hasNextPage
     }
-    media(type: $type, sort: ID) {
+    media(type: $type, sort: $sort) {
       id
       type
       title {
@@ -105,7 +105,7 @@ func NewClient() *Client {
 	}
 }
 
-func (c *Client) FetchPage(ctx context.Context, page, perPage int, mediaType string) (PageResponse, error) {
+func (c *Client) FetchPage(ctx context.Context, page, perPage int, mediaType string, sort []string) (PageResponse, error) {
 	var payload PageResponse
 	if perPage <= 0 {
 		perPage = 50
@@ -114,12 +114,17 @@ func (c *Client) FetchPage(ctx context.Context, page, perPage int, mediaType str
 		perPage = 50
 	}
 
+	if len(sort) == 0 {
+		sort = []string{"ID"}
+	}
+
 	body, err := json.Marshal(map[string]any{
 		"query": GraphQLQuery,
 		"variables": map[string]any{
 			"page":    page,
 			"perPage": perPage,
 			"type":    mediaType,
+			"sort":    sort,
 		},
 	})
 	if err != nil {
@@ -188,4 +193,3 @@ func (c *Client) FetchPage(ctx context.Context, page, perPage int, mediaType str
 
 	return payload, errors.New("exhausted retries fetching AniList data")
 }
-

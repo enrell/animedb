@@ -14,6 +14,28 @@ Both tools automatically create their target databases (and tables) if they do n
   - Update the connection string via the `--dsn` flag if your environment differs.
 - The ingestors enable the `unaccent` and `pg_trgm` extensions automatically; ensure your Postgres installation allows those extensions.
 
+## Docker Quickstart
+
+Spin up everything (Postgres, ingestion pipeline, and API) with Docker:
+
+```bash
+docker compose up -d --build
+```
+
+Services:
+
+- `postgres` – Persistent Postgres instance seeded with the `root` user/database.
+- `seed` – Runs `scripts/docker-seed.sh`, which sequentially executes `cmd/anilist`, `cmd/myanimelist`, and `cmd/videos` to provision schemas/data. It exits after a successful pass.
+- `api` – Starts the HTTP API once Postgres is healthy and the seed pipeline completes. The API listens on `http://localhost:8081`.
+
+Useful commands:
+
+- `docker compose logs -f seed` – Follow the ingestion progress (the service stops after success).
+- `docker compose logs -f api` – Tail the API server logs.
+- `docker compose down -v` – Tear everything down, including the Postgres volume.
+
+All DSNs inside the containers point at the internal `postgres` hostname (`postgres://root:root@postgres:5432/...`). Adjust the compose file if you need different credentials.
+
 ## Building
 
 ```bash

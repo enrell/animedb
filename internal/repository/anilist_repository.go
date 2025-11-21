@@ -14,7 +14,7 @@ type AniListRepository interface {
 	List(ctx context.Context, filters AniListFilters, page, pageSize int) ([]model.AniListMedia, int, error)
 	Count(ctx context.Context, whereClause string, args []any) (int, error)
 	SearchMedia(ctx context.Context, searchTerm string, limit int) ([]SearchMediaResult, error)
-	PrefilterMedia(ctx context.Context, search string, limit int) ([]SearchMediaResult, error)
+	PrefilterMedia(ctx context.Context, search string, format *string, limit int) ([]SearchMediaResult, error)
 }
 
 type SearchMediaResult struct {
@@ -22,6 +22,8 @@ type SearchMediaResult struct {
 	TitleRomaji  sql.NullString
 	TitleEnglish sql.NullString
 	TitleNative  sql.NullString
+	Format       sql.NullString
+	Type         sql.NullString
 }
 
 type AniListFilters struct {
@@ -243,23 +245,36 @@ LIMIT $2;
 	return results, nil
 }
 
-func (r *aniListRepository) PrefilterMedia(ctx context.Context, search string, limit int) ([]SearchMediaResult, error) {
-	const query = `
+func (r *aniListRepository) PrefilterMedia(ctx context.Context, search string, format *string, limit int) ([]SearchMediaResult, error) {
+	query := `
 SELECT
 	id,
 	title_romaji,
 	title_english,
-	title_native
+	title_native,
+	format,
+	type
 FROM media
 WHERE 
 	(length(normalize_title($1)) < 3
 		AND (COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')) ILIKE '%' || normalize_title($1) || '%')
-	OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) > 0.1
-ORDER BY similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) DESC, id
-LIMIT $2;
-`
+	OR similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) > 0.1`
 
-	rows, err := r.db.QueryContext(ctx, query, search, limit)
+	args := []interface{}{search}
+	argPos := 2
+
+	if format != nil && *format != "" {
+		query += fmt.Sprintf(` AND format = $%d`, argPos)
+		args = append(args, *format)
+		argPos++
+	}
+
+	query += fmt.Sprintf(`
+ORDER BY similarity(normalize_title(COALESCE(title_romaji, '')||' '||COALESCE(title_english, '')||' '||COALESCE(title_native, '')), normalize_title($1)) DESC, id
+LIMIT $%d;`, argPos)
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +283,7 @@ LIMIT $2;
 	var results []SearchMediaResult
 	for rows.Next() {
 		var result SearchMediaResult
-		if err := rows.Scan(&result.ID, &result.TitleRomaji, &result.TitleEnglish, &result.TitleNative); err != nil {
+		if err := rows.Scan(&result.ID, &result.TitleRomaji, &result.TitleEnglish, &result.TitleNative, &result.Format, &result.Type); err != nil {
 			return nil, err
 		}
 		results = append(results, result)

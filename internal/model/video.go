@@ -5,11 +5,14 @@ import (
 )
 
 type Anime struct {
-	ID        int       `json:"id"`
-	Title     string    `json:"title"`
-	FolderPath string   `json:"folder_path"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           int       `json:"id"`
+	Title        string    `json:"title"`
+	FolderPath   string    `json:"folder_path"`
+	CoverImageURL *string   `json:"cover_image_url,omitempty"`
+	AniListID    *int      `json:"anilist_id,omitempty"`
+	AniListMetadata *AniListMedia `json:"anilist_metadata,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type Episode struct {
@@ -37,5 +40,21 @@ type Thumbnail struct {
 	FilePath    string    `json:"file_path"`
 	TimestampSec float64  `json:"timestamp_sec"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type Library struct {
+	ID        int       `json:"id"`
+	Path      string    `json:"path"`
+	Name      *string   `json:"name,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type Setting struct {
+	ID        int       `json:"id"`
+	Key       string    `json:"key"`
+	Value     *string   `json:"value,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 

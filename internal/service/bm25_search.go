@@ -14,6 +14,20 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+var technicalStopWords = map[string]bool{
+	"erai": true, "raws": true, "subs": true, "batch": true, "fansub": true,
+	"1080p": true, "720p": true, "480p": true, "4k": true, "2160p": true,
+	"hevc": true, "h264": true, "h265": true, "x264": true, "x265": true,
+	"avc": true, "aac": true, "ac3": true, "dts": true, "flac": true,
+	"webrip": true, "bdrip": true, "bluray": true, "dvd": true, "web": true,
+	"cr": true, "tv": true, "raw": true,
+	"multiple": true, "subtitle": true, "mkv": true, "mp4": true, "avi": true,
+}
+
+func isStopWord(token string) bool {
+	return technicalStopWords[token]
+}
+
 type BM25SearchEngine struct {
 	k1           float64
 	b            float64
@@ -30,6 +44,9 @@ type Document struct {
 	TitleEnglish string
 	TitleNative  string
 	SeasonNumber int
+	PartNumber   int
+	Format       string
+	Type         string
 	Score        float64
 	Source       string
 }
@@ -105,6 +122,9 @@ func (e *BM25SearchEngine) calculateBM25IDF(documents []*Document) {
 	for _, doc := range documents {
 		seen := make(map[string]bool)
 		for _, token := range doc.Tokens {
+			if isStopWord(token) {
+				continue
+			}
 			if !seen[token] {
 				docFreq[token]++
 				seen[token] = true
@@ -113,7 +133,11 @@ func (e *BM25SearchEngine) calculateBM25IDF(documents []*Document) {
 	}
 
 	for term, df := range docFreq {
-		e.idfCache[term] = math.Log((totalDocs-float64(df)+0.5)/(float64(df)+0.5) + 1)
+		if !isStopWord(term) {
+			e.idfCache[term] = math.Log((totalDocs-float64(df)+0.5)/(float64(df)+0.5) + 1)
+		} else {
+			e.idfCache[term] = 0
+		}
 	}
 }
 
@@ -123,14 +147,28 @@ func (e *BM25SearchEngine) calculateBM25Score(queryTokens []string, doc *Documen
 
 	docTF := make(map[string]int)
 	for _, token := range doc.Tokens {
-		docTF[token]++
+		if !isStopWord(token) {
+			docTF[token]++
+		}
 	}
 
-	docLength := float64(len(doc.Tokens))
+	docLength := float64(0)
+	for _, token := range doc.Tokens {
+		if !isStopWord(token) {
+			docLength++
+		}
+	}
+	if docLength == 0 {
+		docLength = 1
+	}
 
 	var score float64
 
 	for _, qToken := range queryTokens {
+		if isStopWord(qToken) {
+			continue
+		}
+
 		tf := float64(docTF[qToken])
 		idf := e.idfCache[qToken]
 
@@ -152,14 +190,14 @@ func (e *BM25SearchEngine) RankCandidates(ctx context.Context, query string, can
 		return nil
 	}
 
-	topK := e.RankTopK(query, candidates, querySeason, hasQuerySeason, 1)
+	topK := e.RankTopK(query, candidates, querySeason, hasQuerySeason, 0, false, "", false, 1)
 	if len(topK) == 0 {
 		return nil
 	}
 	return topK[0]
 }
 
-func (e *BM25SearchEngine) RankTopK(query string, candidates []*Document, querySeason int, hasQuerySeason bool, k int) []*Document {
+func (e *BM25SearchEngine) RankTopK(query string, candidates []*Document, querySeason int, hasQuerySeason bool, queryPart int, hasQueryPart bool, queryFormat string, hasQueryFormat bool, k int) []*Document {
 	if len(candidates) == 0 {
 		return []*Document{}
 	}
@@ -170,9 +208,18 @@ func (e *BM25SearchEngine) RankTopK(query string, candidates []*Document, queryS
 
 	var totalLength float64
 	for _, doc := range candidates {
-		totalLength += float64(len(doc.Tokens))
+		docLength := float64(0)
+		for _, token := range doc.Tokens {
+			if !isStopWord(token) {
+				docLength++
+			}
+		}
+		totalLength += docLength
 	}
 	e.avgDocLength = totalLength / float64(len(candidates))
+	if e.avgDocLength == 0 {
+		e.avgDocLength = 1
+	}
 
 	e.calculateBM25IDF(candidates)
 
@@ -195,6 +242,22 @@ func (e *BM25SearchEngine) RankTopK(query string, candidates []*Document, queryS
 				score += 0.4
 			} else {
 				score -= 0.3
+			}
+		}
+		
+		if hasQueryPart && doc.PartNumber > 0 {
+			if queryPart == doc.PartNumber {
+				score += 0.4
+			} else {
+				score -= 0.3
+			}
+		}
+		
+		if hasQueryFormat && queryFormat != "" && doc.Format != "" {
+			if queryFormat == doc.Format {
+				score += 0.5
+			} else {
+				score -= 0.4
 			}
 		}
 

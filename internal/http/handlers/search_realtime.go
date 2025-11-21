@@ -111,7 +111,7 @@ func (h *RealtimeSearchHandlers) Search(w http.ResponseWriter, r *http.Request) 
 	var total int
 
 	if source == "anilist" {
-		anilistResults, anilistTotal, err := service.HandleImprovedAniListSearch(ctx, h.anilistRepo, query, maxResults)
+		anilistResults, anilistTotal, err := service.HandleImprovedAniListSearch(ctx, h.anilistRepo, query, nil, maxResults)
 		if err == nil {
 			total = anilistTotal
 			for _, r := range anilistResults {
@@ -181,13 +181,14 @@ func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query st
 
 	var allCandidates []*service.Document
 
-	anilistPrefiltered, err := h.anilistRepo.PrefilterMedia(ctx, searchTerm, 100)
+	anilistPrefiltered, err := h.anilistRepo.PrefilterMedia(ctx, searchTerm, nil, 100)
 	if err == nil {
 		for _, result := range anilistPrefiltered {
 			combinedTitle := result.TitleRomaji.String + " " + result.TitleEnglish.String + " " + result.TitleNative.String
 			tokens := service.TokenizePublic(combinedTitle)
 			ngramTokens := service.GenerateAllNGramsPublic(tokens, 3)
 			season, _ := util.ExtractSeasonNumber(combinedTitle)
+			part, _ := util.ExtractPartNumber(combinedTitle)
 
 			doc := &service.Document{
 				ID:           result.ID,
@@ -197,6 +198,9 @@ func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query st
 				TitleEnglish: result.TitleEnglish.String,
 				TitleNative:  result.TitleNative.String,
 				SeasonNumber: season,
+				PartNumber:   part,
+				Format:       result.Format.String,
+				Type:         result.Type.String,
 				Source:       "anilist",
 			}
 			allCandidates = append(allCandidates, doc)
@@ -210,6 +214,7 @@ func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query st
 			tokens := service.TokenizePublic(combinedTitle)
 			ngramTokens := service.GenerateAllNGramsPublic(tokens, 3)
 			season, _ := util.ExtractSeasonNumber(combinedTitle)
+			part, _ := util.ExtractPartNumber(combinedTitle)
 
 			doc := &service.Document{
 				ID:           result.ID,
@@ -219,6 +224,9 @@ func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query st
 				TitleEnglish: result.TitleEnglish.String,
 				TitleNative:  result.TitleJapanese.String,
 				SeasonNumber: season,
+				PartNumber:   part,
+				Format:       "",
+				Type:         "",
 				Source:       "myanimelist",
 			}
 			allCandidates = append(allCandidates, doc)
@@ -231,8 +239,9 @@ func (h *RealtimeSearchHandlers) searchBothSources(ctx context.Context, query st
 		return []RealtimeSearchResult{}, total
 	}
 
+	queryPart, hasQueryPart := util.ExtractPartNumber(query)
 	engine := service.NewBM25SearchEngine()
-	topDocs := engine.RankTopK(query, allCandidates, querySeason, hasQuerySeason, limit)
+	topDocs := engine.RankTopK(query, allCandidates, querySeason, hasQuerySeason, queryPart, hasQueryPart, "", false, limit)
 
 	var results []RealtimeSearchResult
 	for _, doc := range topDocs {

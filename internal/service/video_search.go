@@ -52,7 +52,7 @@ func (s *VideoSearchService) Search(ctx context.Context, query string, limit int
 		documents = append(documents, doc)
 	}
 
-	ranked := s.bm25Engine.RankTopK(query, documents, 0, false, limit)
+	ranked := s.bm25Engine.RankTopK(query, documents, 0, false, 0, false, "", false, limit)
 
 	results := make([]VideoSearchResult, 0, len(ranked))
 	for _, doc := range ranked {

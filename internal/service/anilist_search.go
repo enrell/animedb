@@ -10,12 +10,13 @@ import (
 	"animedb/internal/util"
 )
 
-func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRepository, search string, k int) ([]model.SearchResultWithMetadata, int, error) {
+func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRepository, search string, format *string, k int) ([]model.SearchResultWithMetadata, int, error) {
 	if k <= 0 {
 		k = 1
 	}
 
 	querySeason, hasQuerySeason := util.ExtractSeasonNumber(search)
+	queryPart, hasQueryPart := util.ExtractPartNumber(search)
 	baseQuery := util.RemoveSeasonFromQuery(search)
 
 	searchTerm := baseQuery
@@ -23,7 +24,11 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 		searchTerm = search
 	}
 
-	results, err := repo.PrefilterMedia(ctx, searchTerm, 100)
+	if searchTerm == "" {
+		searchTerm = search
+	}
+
+	results, err := repo.PrefilterMedia(ctx, searchTerm, format, 100)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -39,6 +44,7 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 		ngramTokens := generateAllNGrams(tokens, 3)
 
 		season, _ := util.ExtractSeasonNumber(combinedTitle)
+		part, _ := util.ExtractPartNumber(combinedTitle)
 
 		doc := &Document{
 			ID:           result.ID,
@@ -48,6 +54,9 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 			TitleEnglish: result.TitleEnglish.String,
 			TitleNative:  result.TitleNative.String,
 			SeasonNumber: season,
+			PartNumber:   part,
+			Format:       result.Format.String,
+			Type:         result.Type.String,
 		}
 
 		candidates = append(candidates, doc)
@@ -58,20 +67,32 @@ func HandleImprovedAniListSearch(ctx context.Context, repo repository.AniListRep
 	}
 
 	engine := NewBM25SearchEngine()
-	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, k)
+	hasQueryFormat := format != nil && *format != ""
+	queryFormat := ""
+	if hasQueryFormat {
+		queryFormat = *format
+	}
+	topDocs := engine.RankTopK(search, candidates, querySeason, hasQuerySeason, queryPart, hasQueryPart, queryFormat, hasQueryFormat, k)
 
 	if len(topDocs) == 0 {
 		return []model.SearchResultWithMetadata{}, totalCandidates, nil
 	}
 
 	var resultList []model.SearchResultWithMetadata
+	const minScoreThreshold = 0.05
+	
 	for _, bestDoc := range topDocs {
+		if bestDoc.Score < minScoreThreshold {
+			continue
+		}
+		
 		result := model.SearchResultWithMetadata{
 			ID:           bestDoc.ID,
 			TitleRomaji:  sql.NullString{String: bestDoc.TitleRomaji, Valid: bestDoc.TitleRomaji != ""},
 			TitleEnglish: sql.NullString{String: bestDoc.TitleEnglish, Valid: bestDoc.TitleEnglish != ""},
 			TitleNative:  sql.NullString{String: bestDoc.TitleNative, Valid: bestDoc.TitleNative != ""},
 			SeasonNumber: bestDoc.SeasonNumber,
+			PartNumber:   bestDoc.PartNumber,
 			Score:        bestDoc.Score,
 		}
 

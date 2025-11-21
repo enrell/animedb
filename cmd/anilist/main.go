@@ -84,12 +84,14 @@ func main() {
 	defer stop()
 
 	var (
-		adminDSN  string
-		database  string
-		perPage   int
-		startPage int
-		maxPages  int
-		mediaType string
+		adminDSN     string
+		database     string
+		perPage      int
+		startPage    int
+		maxPages     int
+		mediaType    string
+		skipIfSeeded bool
+		sortOrder    string
 	)
 
 	flag.StringVar(&adminDSN, "dsn", defaultAdminDSN, "Admin Postgres DSN that has privileges to create databases")
@@ -98,6 +100,8 @@ func main() {
 	flag.IntVar(&startPage, "start-page", 1, "Starting Page value")
 	flag.IntVar(&maxPages, "max-pages", 0, "Maximum number of pages to fetch (0 fetches all)")
 	flag.StringVar(&mediaType, "media-type", "ANIME", "AniList MediaType filter (ANIME or MANGA)")
+	flag.BoolVar(&skipIfSeeded, "skip-if-seeded", false, "Skip ingestion if the database is already seeded")
+	flag.StringVar(&sortOrder, "sort", "ID", "Sort order (e.g. ID, ID_DESC, UPDATED_AT_DESC)")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -115,6 +119,17 @@ func main() {
 
 	if err := postgres.EnsureSchemas(ctx, db, schemaStatements); err != nil {
 		log.Fatalf("ensure schema: %v", err)
+	}
+
+	if skipIfSeeded {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM media").Scan(&count); err != nil {
+			log.Fatalf("check if seeded: %v", err)
+		}
+		if count > 0 {
+			log.Printf("Database %s is already seeded with %d records. Skipping ingestion.", database, count)
+			return
+		}
 	}
 
 	client := anilist.NewClient()
@@ -140,7 +155,7 @@ func main() {
 		}
 
 		log.Printf("Fetching AniList page %d (perPage=%d)...", page, perPage)
-		resp, err := client.FetchPage(ctx, page, perPage, mediaType)
+		resp, err := client.FetchPage(ctx, page, perPage, mediaType, []string{sortOrder})
 		if err != nil {
 			log.Fatalf("fetch page %d: %v", page, err)
 		}

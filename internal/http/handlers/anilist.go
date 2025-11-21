@@ -148,7 +148,7 @@ func (h *AniListHandlers) MediaSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxResults := limit * page
-	resultsWithMeta, total, err := service.HandleImprovedAniListSearch(ctx, h.repo, search, maxResults)
+	resultsWithMeta, total, err := service.HandleImprovedAniListSearch(ctx, h.repo, search, nil, maxResults)
 	if err != nil {
 		response.WriteError(w, http.StatusInternalServerError, err)
 		return
