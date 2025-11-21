@@ -10,15 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"animedb/internal/scanner"
-
 	"animedb/internal/http/handlers"
-	"animedb/internal/indexer"
 	custommiddleware "animedb/internal/middleware"
 	"animedb/internal/postgres"
 	"animedb/internal/repository"
-	"animedb/internal/service"
-	"animedb/internal/watcher"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -28,7 +23,6 @@ const (
 	defaultListenAddr         = "0.0.0.0:8081"
 	defaultAniListDSN         = "postgres://root:root@localhost:5432/anilist?sslmode=disable"
 	defaultMyAnimeListDSN     = "postgres://root:root@localhost:5432/myanimelist?sslmode=disable"
-	defaultVideosDSN          = "postgres://root:root@localhost:5432/videos?sslmode=disable"
 	queryTimeout              = 15 * time.Second
 	normalizeTitleFunctionSQL = `
 CREATE OR REPLACE FUNCTION normalize_title(input TEXT)
@@ -75,14 +69,12 @@ func main() {
 		adminDSN       string
 		anilistDSN     string
 		myAnimeListDSN string
-		videosDSN      string
 	)
 
 	flag.StringVar(&listenAddr, "listen", defaultListenAddr, "HTTP listen address")
 	flag.StringVar(&adminDSN, "admin-dsn", "postgres://root:root@localhost:5432/root?sslmode=disable", "Admin Postgres DSN used to ensure target databases exist")
 	flag.StringVar(&anilistDSN, "anilist-dsn", defaultAniListDSN, "Postgres DSN for the AniList database")
 	flag.StringVar(&myAnimeListDSN, "myanimelist-dsn", defaultMyAnimeListDSN, "Postgres DSN for the MyAnimeList database")
-	flag.StringVar(&videosDSN, "videos-dsn", defaultVideosDSN, "Postgres DSN for the videos database")
 	flag.Parse()
 
 	args := flag.Args()
@@ -109,11 +101,6 @@ func main() {
 		log.Fatalf("prepare MyAnimeList database: %v", err)
 	}
 
-	vidTargetDSN, err := ensureDSN(ctx, adminDSN, videosDSN, "videos")
-	if err != nil {
-		log.Fatalf("prepare videos database: %v", err)
-	}
-
 	aniDB, err := openAndPing(aniTargetDSN)
 	if err != nil {
 		log.Fatalf("connect AniList database: %v", err)
@@ -132,40 +119,12 @@ func main() {
 		log.Fatalf("ensure MyAnimeList search helpers: %v", err)
 	}
 
-	vidDB, err := openAndPing(vidTargetDSN)
-	if err != nil {
-		log.Fatalf("connect videos database: %v", err)
-	}
-	defer vidDB.Close()
-	if err := repository.EnsureVideosSearchHelpers(context.Background(), vidDB, normalizeTitleFunctionSQL); err != nil {
-		log.Fatalf("ensure videos search helpers: %v", err)
-	}
-
 	aniRepo := repository.NewAniListRepository(aniDB)
 	malRepo := repository.NewMyAnimeListRepository(malDB)
-	vidRepo := repository.NewVideoRepository(vidDB)
 
-	videoIndexer := indexer.NewVideoIndexer(vidRepo, indexer.IndexerOptions{
-		WorkerCount:    30,
-		SkipExisting:   true,
-		ExtractThumbs:  true,
-		AniListRepo:    aniRepo,
-		MyAnimeListRepo: malRepo,
-	})
-
-	fileWatcher, err := watcher.NewWatcher(watcher.WatcherOptions{
-		Debounce: 500 * time.Millisecond,
-	})
-	if err != nil {
-		log.Fatalf("create file watcher: %v", err)
-	}
-
-	transcodeService := service.NewTranscodeService("")
-	
 	aniHandlers := handlers.NewAniListHandlers(aniRepo)
 	myAnimeListHandlers := handlers.NewMyAnimeListHandlers(malRepo)
 	realtimeHandlers := handlers.NewRealtimeSearchHandlers(aniRepo, malRepo)
-	videoHandlers := handlers.NewVideoHandlers(vidRepo, aniRepo, malRepo, videoIndexer, transcodeService, fileWatcher)
 
 	rateLimiter := custommiddleware.NewRateLimiter(100)
 
@@ -197,66 +156,10 @@ func main() {
 		r.Get("/anime/{id}", myAnimeListHandlers.MediaGet)
 	})
 
-	router.Route("/videos", func(r chi.Router) {
-		r.Get("/anime", videoHandlers.AnimeList)
-		r.Get("/anime/{id}", videoHandlers.AnimeGet)
-		r.Get("/anime/{id}/metadata", videoHandlers.FetchAnimeMetadata)
-		r.Get("/anime/{id}/episodes", videoHandlers.EpisodesList)
-		r.Get("/libraries/{id}/anime", videoHandlers.AnimeListByLibrary)
-		r.Get("/episodes/{id}", videoHandlers.EpisodeGet)
-		r.Get("/episodes/{id}/thumbnails", videoHandlers.ThumbnailsList)
-		r.Get("/search", videoHandlers.Search)
-		r.Post("/scan", videoHandlers.TriggerScan)
-		r.Get("/scan/status", videoHandlers.ScanStatus)
-		r.Get("/libraries", videoHandlers.ListLibraries)
-		r.Post("/libraries", videoHandlers.CreateLibrary)
-		r.Get("/libraries/{id}", videoHandlers.GetLibrary)
-		r.Put("/libraries/{id}", videoHandlers.UpdateLibrary)
-		r.Delete("/libraries/{id}", videoHandlers.DeleteLibrary)
-		r.Get("/settings", videoHandlers.GetSettings)
-		r.Put("/settings", videoHandlers.UpdateSettings)
-		r.Get("/settings/{key}", videoHandlers.GetSetting)
-		r.Delete("/settings/{key}", videoHandlers.DeleteSetting)
-		r.Get("/episodes/{id}/stream", videoHandlers.StreamEpisode)
-		r.Post("/episodes/update-numbers", videoHandlers.UpdateEpisodeNumbers)
-		r.Post("/episodes/extract-thumbnails", videoHandlers.ExtractThumbnails)
-		r.Get("/hardware", videoHandlers.GetHardwareInfo)
-		r.Get("/images", videoHandlers.ServeImage)
-		r.Post("/anime/clear-cover-cache", videoHandlers.ClearCoverCache)
-	})
-
 	httpServer := &http.Server{
 		Addr:              listenAddr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	libraries, err := vidRepo.ListLibraries(context.Background())
-	if err == nil && len(libraries) > 0 {
-		libraryPaths := make([]string, 0, len(libraries))
-		for _, lib := range libraries {
-			libraryPaths = append(libraryPaths, lib.Path)
-		}
-		
-		go func() {
-			watcherCtx := context.Background()
-			_ = fileWatcher.Watch(watcherCtx, libraryPaths, func(ctx context.Context, event watcher.Event) error {
-				if !event.IsDir && scanner.IsVideoFile(event.Path) {
-					go func() {
-						if event.Op == watcher.Create || event.Op == watcher.Write {
-							_ = videoIndexer.IndexFile(ctx, event.Path)
-						} else if event.Op == watcher.Remove {
-							episode, _ := vidRepo.GetEpisodeByPath(ctx, event.Path)
-							if episode != nil {
-								_ = vidRepo.DeleteEpisode(ctx, episode.ID)
-							}
-						}
-					}()
-				}
-				return nil
-			})
-		}()
-		log.Printf("File watcher started for %d library paths", len(libraries))
 	}
 
 	log.Printf("REST API listening on %s", listenAddr)

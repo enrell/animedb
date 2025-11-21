@@ -20,11 +20,12 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["/app/scripts/docker-seed.sh"]
+    volumes:
+      - .:/app
     environment:
       ADMIN_DSN: postgres://root:root@postgres:5432/root?sslmode=disable
       ANILIST_DB: anilist
       MYANIMELIST_DB: myanimelist
-      VIDEOS_DB: videos
       ANILIST_SORT: ID
       ENABLE_ANILIST_SEED: "true"
       ENABLE_MYANIMELIST_SEED: "false"
@@ -49,8 +50,6 @@ services:
       - postgres://root:root@postgres:5432/anilist?sslmode=disable
       - --myanimelist-dsn
       - postgres://root:root@postgres:5432/myanimelist?sslmode=disable
-      - --videos-dsn
-      - postgres://root:root@postgres:5432/videos?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy

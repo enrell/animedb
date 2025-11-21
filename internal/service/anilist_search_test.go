@@ -146,4 +146,3 @@ func TestHandleImprovedAniListSearch_InvalidLimit(t *testing.T) {
 		t.Errorf("unmet expectations: %v", err)
 	}
 }
-
