@@ -2,7 +2,7 @@
 
 set -eu
 
-ADMIN_DSN="${ADMIN_DSN:-postgres://root:root@postgres:5432/root?sslmode=disable}"
+ADMIN_DSN="${ADMIN_DSN:-postgres://root:root@host.docker.internal:5432/root?sslmode=disable}"
 ANILIST_DB="${ANILIST_DB:-anilist}"
 MYANIMELIST_DB="${MYANIMELIST_DB:-myanimelist}"
 

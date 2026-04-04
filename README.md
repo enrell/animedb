@@ -16,7 +16,7 @@ Both tools automatically create their target databases (and tables) if they do n
 
 ## Docker Quickstart
 
-Spin up everything (Postgres, ingestion pipeline, and API) with Docker:
+Spin up the ingestion pipeline and API against your existing PostgreSQL instance:
 
 ```bash
 docker compose up -d --build
@@ -24,17 +24,25 @@ docker compose up -d --build
 
 Services:
 
-- `postgres` – Persistent Postgres instance seeded with the `root` user/database.
 - `seed` – Runs `scripts/docker-seed.sh`, which sequentially executes `cmd/anilist`, `cmd/myanimelist`, and `cmd/videos` to provision schemas/data. It exits after a successful pass.
-- `api` – Starts the HTTP API once Postgres is healthy and the seed pipeline completes. The API listens on `http://localhost:8081`.
+- `api` – Starts the HTTP API backed by your external Postgres databases. The API listens on `http://localhost:8081`.
 
 Useful commands:
 
 - `docker compose logs -f seed` – Follow the ingestion progress (the service stops after success).
 - `docker compose logs -f api` – Tail the API server logs.
-- `docker compose down -v` – Tear everything down, including the Postgres volume.
+- `docker compose down` – Tear everything down.
 
-All DSNs inside the containers point at the internal `postgres` hostname (`postgres://root:root@postgres:5432/...`). Adjust the compose file if you need different credentials.
+By default, the containers connect to `postgres://root:root@host.docker.internal:5432/...`, which works well when your shared Docker Postgres publishes port `5432` on the host. On Linux, the compose file maps `host.docker.internal` to the Docker host via `host-gateway`.
+
+If your shared Postgres uses different credentials, export DSNs before starting compose:
+
+```bash
+export ADMIN_DSN='postgres://user:pass@host.docker.internal:5432/root?sslmode=disable'
+export ANILIST_DSN='postgres://user:pass@host.docker.internal:5432/anilist?sslmode=disable'
+export MYANIMELIST_DSN='postgres://user:pass@host.docker.internal:5432/myanimelist?sslmode=disable'
+docker compose up -d --build
+```
 
 ## Building
 
