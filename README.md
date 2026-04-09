@@ -1,179 +1,122 @@
-# AnimeDB Ingestion Tools
+# animedb
 
-This repository contains two Go CLIs that mirror data from public anime APIs into local PostgreSQL databases:
+`animedb` is a Rust-first metadata project for local media servers.
 
-- `cmd/anilist` pulls media data from the AniList GraphQL API into a database named `anilist`.
-- `cmd/myanimelist` pulls anime data from the Jikan REST API (MyAnimeList mirror) into a database named `myanimelist`.
+> Advisory
+> `animedb` stores and normalizes public metadata, but it does not override provider Terms of Service, attribution requirements, authentication rules, rate limits or mature-content restrictions. Before enabling bulk sync for a source, verify that your intended usage is allowed by that source and configure conservative sync budgets.
 
-Both tools automatically create their target databases (and tables) if they do not already exist.
+It has two consumption modes that can be used separately or together:
 
-## Prerequisites
+- local-first: manage a local SQLite catalog with schema, downloads, sync, FTS5 search and JSON source payloads
+- remote-first: query normalized metadata from remote providers without forcing client applications to manage persistence or provider-specific normalization
 
-- Go 1.21+ (module currently targets Go `1.25.1` for toolchain compatibility).
-- PostgreSQL running locally with a user/database `root`/`root` as described in the task request.
-  - Update the connection string via the `--dsn` flag if your environment differs.
-- The ingestors enable the `unaccent` and `pg_trgm` extensions automatically; ensure your Postgres installation allows those extensions.
+The project also ships a Rust GraphQL API on top of the same crate.
 
-## Docker Quickstart
+## Workspace
 
-Spin up the ingestion pipeline and API against your existing PostgreSQL instance:
+- `crates/animedb` - library crate with SQLite schema management, sync and query APIs
+- `crates/animedb-api` - GraphQL API binary built on top of `animedb`
+
+## Current Rust surface
+
+### Local-first
+
+```rust
+use animedb::{AnimeDb, SourceName};
+
+let (db, report) = AnimeDb::generate_database_with_report("/tmp/animedb.sqlite")?;
+println!("downloaded {} records", report.total_upserted_records);
+
+let updated = AnimeDb::sync_database("/tmp/animedb.sqlite")?;
+println!("synced {} records", updated.total_upserted_records);
+
+let monster = db.anime_metadata().by_external_id(SourceName::AniList, "19")?;
+println!("{}", monster.name());
+
+let movies = db.movie_metadata().search("spirited away")?;
+println!("movie hits: {}", movies.len());
+# Ok::<(), animedb::Error>(())
+```
+
+### Remote-first
+
+```rust
+use animedb::AnimeDb;
+
+let remote = AnimeDb::remote_anilist();
+let results = remote.anime_metadata().search("monster")?;
+let media = remote.anime_metadata().by_id("19")?;
+# Ok::<(), animedb::Error>(())
+```
+
+Or choose the provider dynamically:
+
+```rust
+use animedb::{AnimeDb, RemoteSource};
+
+let remote = AnimeDb::remote(RemoteSource::Jikan);
+let results = remote.movie_metadata().search("paprika")?;
+# Ok::<(), animedb::Error>(())
+```
+
+## Database design
+
+The SQLite catalog is created and migrated by the crate itself. The current schema includes:
+
+- `media` - canonical normalized records
+- `media_alias` - normalized aliases and synonyms
+- `media_external_id` - source-specific identifiers
+- `source_record` - raw per-source JSON payloads and source update metadata
+- `field_provenance` - winner-per-field audit trail for canonical merge decisions
+- `sync_state` - persisted sync checkpoints/cursors
+- `media_fts` - `FTS5` index for title, alias and synopsis search
+
+The connection is configured with:
+
+- `PRAGMA journal_mode=WAL`
+- `PRAGMA synchronous=NORMAL`
+- `PRAGMA foreign_keys=ON`
+- `PRAGMA busy_timeout=5000`
+- `PRAGMA temp_store=MEMORY`
+
+## GraphQL API
+
+The GraphQL API is provided by `animedb-api`.
+
+Run it locally:
 
 ```bash
-docker compose up -d --build
+cargo run -p animedb-api
 ```
 
-Services:
+Environment variables:
 
-- `seed` – Runs `scripts/docker-seed.sh`, which sequentially executes `cmd/anilist`, `cmd/myanimelist`, and `cmd/videos` to provision schemas/data. It exits after a successful pass.
-- `api` – Starts the HTTP API backed by your external Postgres databases. The API listens on `http://localhost:8081`.
+- `ANIMEDB_DATABASE_PATH` - SQLite file path, default `/data/animedb.sqlite`
+- `ANIMEDB_LISTEN_ADDR` - bind address, default `0.0.0.0:8080`
 
-Useful commands:
+Endpoints:
 
-- `docker compose logs -f seed` – Follow the ingestion progress (the service stops after success).
-- `docker compose logs -f api` – Tail the API server logs.
-- `docker compose down` – Tear everything down.
+- `GET /` - GraphQL Playground
+- `POST /graphql` - GraphQL endpoint
+- `GET /healthz` - health check
 
-By default, the containers connect to `postgres://root:root@host.docker.internal:5432/...`, which works well when your shared Docker Postgres publishes port `5432` on the host. On Linux, the compose file maps `host.docker.internal` to the Docker host via `host-gateway`.
+## Docker
 
-If your shared Postgres uses different credentials, export DSNs before starting compose:
+Build and run the Rust GraphQL API:
 
 ```bash
-export ADMIN_DSN='postgres://user:pass@host.docker.internal:5432/root?sslmode=disable'
-export ANILIST_DSN='postgres://user:pass@host.docker.internal:5432/anilist?sslmode=disable'
-export MYANIMELIST_DSN='postgres://user:pass@host.docker.internal:5432/myanimelist?sslmode=disable'
-docker compose up -d --build
+docker build -t animedb .
+docker run --rm -p 8080:8080 -v $(pwd)/data:/data animedb
 ```
 
-## Building
+## Make targets
 
-```bash
-go build ./...
-```
+The repository now includes a `Makefile` for the common workflows:
 
-This validates that both commands compile.
-
-## AniList Ingestion
-
-```bash
-go run ./cmd/anilist --dsn postgres://root:root@localhost:5432/root?sslmode=disable
-```
-
-Key flags:
-
-- `--dsn`: Admin-level Postgres connection string used to create/access the `anilist` database. Default matches the provided credentials.
-- `--database`: Override the default `anilist` database name (useful for testing).
-- `--per-page`: Page size per AniList GraphQL request (max 50).
-- `--start-page`: Starting page number (default 1).
-- `--max-pages`: Limit total pages processed (0 means fetch everything).
-- `--media-type`: AniList `MediaType` filter (default `ANIME`, accepts `MANGA`).
-
-The command respects AniList’s 90 requests/minute rate limit by dynamically pacing requests based on the response headers. On 429 responses it waits for the advertised reset window before retrying.
-
-## MyAnimeList (Jikan) Ingestion
-
-```bash
-go run ./cmd/myanimelist --dsn postgres://root:root@localhost:5432/root?sslmode=disable
-```
-
-Key flags:
-
-- `--dsn`: Admin-level Postgres connection string used to create/access the `myanimelist` database.
-- `--database`: Override the default `myanimelist` database name (useful for testing).
-- `--per-page`: Page size per request (Jikan caps at 25; default 25).
-- `--start-page`: Starting page number (default 1).
-- `--max-pages`: Limit total pages processed (0 means fetch everything).
-
-This command honours Jikan’s published rate limits by observing the `X-RateLimit-*` headers and `Retry-After` responses, backing off whenever the API signals throttling.
-
-## Output Schema Overview
-
-Each command creates a single `media`/`anime` table with indexed fields reflecting the public API payloads. Nested/array fields are stored as `JSONB` so that additional attributes can be accessed through PostgreSQL's JSON operators without schema changes.
-
-Both tables use functional trigram GIN indexes on title expressions for fast fuzzy matching. Searches are accent-insensitive and normalize titles to lower case and ASCII.
-
-See the definitions in:
-
-- `cmd/anilist/main.go` (`CREATE TABLE ... media`)
-- `cmd/myanimelist/main.go` (`CREATE TABLE ... anime`)
-
-## Operational Notes
-
-- Both ingestors stream sequentially through pages until the API reports no additional data or you hit the `--max-pages` limit.
-- Tables are populated using UPSERTs so re-running a command keeps the databases in sync.
-- Long-running ingestions can be interrupted with `Ctrl+C`; the commands handle context cancellation cleanly and leave committed data intact.
-
-## Smoke Test Script
-
-Run a quick end-to-end verification that exercises both ingestors against temporary databases and tears them down afterward:
-
-```bash
-go run ./cmd/test-ingest --dsn postgres://root:root@localhost:5432/root?sslmode=disable
-```
-
-- The script provisions two random database names, limits each ingestor to a single API page, validates that at least one row is stored, and finally drops both databases (using `DROP DATABASE ... WITH (FORCE)`).
-- Override `--anilist-pages`, `--anilist-per-page`, `--mal-pages`, or `--mal-per-page` to tweak throughput while keeping the test lightweight.
-
-## REST API Server
-
-Serve the ingested data over HTTP for web apps:
-
-```bash
-go run ./cmd/api :8081
-```
-
-The positional argument sets the listen address (defaults to `:8081`). You can still override DSNs with flags:
-
-```bash
-go run ./cmd/api :8081 \
-  --admin-dsn postgres://root:root@localhost:5432/root?sslmode=disable \
-  --anilist-dsn postgres://root:root@localhost:5432/anilist?sslmode=disable \
-  --myanimelist-dsn postgres://root:root@localhost:5432/myanimelist?sslmode=disable
-```
-
-Key endpoints:
-
-- `GET /healthz` – health check.
-- `GET /search/realtime` – unified real-time search (supports both AniList and MyAnimeList with source filtering).
-- `GET /anilist/media/search` – top K AniList matches ranked by BM25 with season awareness (`search`, `limit` ≤50, default 10).
-- `GET /anilist/media` – paginated AniList catalogue (`page`, `page_size` ≤500, `search`, `type`, `season`, `season_year`).
-- `GET /anilist/media/{id}` – single AniList media record.
-- `GET /myanimelist/anime/search` – top K MyAnimeList matches ranked by BM25 (`search`, `limit` ≤50, default 10).
-- `GET /myanimelist/anime` – paginated MyAnimeList catalogue (`page`, `page_size` ≤500, `search`, `type`, `season`, `year`).
-- `GET /myanimelist/anime/{id}` – single MyAnimeList anime record.
-
-Search endpoints use two-stage ranking:
-- **Stage 1 (Prefilter)**: Trigram similarity returns top 100 candidates from PostgreSQL.
-- **Stage 2 (Re-rank)**: BM25 algorithm with n-grams (up to trigrams) and season matching.
-
-Example quick search (returns up to 10 results, configurable via `limit`):
-
-```bash
-curl 'http://localhost:8081/anilist/media/search?search=tensei%20slime&limit=5'
-```
-
-Example realtime unified search (defaults to source=both):
-
-```bash
-curl 'http://localhost:8081/search/realtime?q=attack%20titan&source=both&limit=10'
-```
-
-Paginated responses include metadata, e.g.:
-
-```jsonc
-{
-  "data": [...],
-  "pagination": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1234
-  }
-}
-```
-
-The server checks that the backing databases exist (creating them through the admin DSN when missing) and applies query timeouts to keep requests responsive.
-
-## Operational Notes
-
-- Both ingestors stream sequentially through pages until the API reports no additional data or you hit the `--max-pages` limit.
-- Tables are populated using UPSERTs so re-running a command keeps the databases in sync.
-- Long-running ingestions can be interrupted with `Ctrl+C`; the commands handle context cancellation cleanly and leave committed data intact.
+- `make build` - compile the workspace
+- `make test` - run the Rust test suite
+- `make crate-real` - run the real-provider crate example against AniList, Jikan and Kitsu
+- `make test-real` - run the end-to-end real pipeline: crate example + Docker API + GraphQL checks
+- `make docker-build` - build the API image
+- `make docker-run` - run the API image locally
+- `make debug-api` - run the GraphQL API directly with `cargo run`

@@ -4,6 +4,10 @@ api
 /cmd/anilist/anilist
 /cmd/myanimelist/myanimelist
 /cmd/test-ingest/test-ingest
+/target
+*.db
+*.db-shm
+*.db-wal
 
 # IDE and editor files
 .cursor/
@@ -19,3 +23,6 @@ Thumbs.db
 
 # Dependencies
 vendor/
+
+# Local tooling
+.codex

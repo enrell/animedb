@@ -1,0 +1,16 @@
+[package]
+name = "animedb-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "GraphQL API for the animedb Rust metadata catalog"
+
+[dependencies]
+animedb = { path = "../animedb" }
+async-graphql.workspace = true
+async-graphql-axum.workspace = true
+axum.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
