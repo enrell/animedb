@@ -13,6 +13,8 @@ pub fn provider_weight(source: SourceName) -> f64 {
         SourceName::Jikan => 0.76,
         SourceName::MyAnimeList => 0.80,
         SourceName::Kitsu => 0.78,
+        SourceName::Tvmaze => 0.82,
+        SourceName::Imdb => 0.85,
     }
 }
 

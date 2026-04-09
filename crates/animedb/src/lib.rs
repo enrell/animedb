@@ -24,5 +24,8 @@ pub use model::{
     SearchOptions, SourceName, SourcePayload, StoredMedia, SyncCursor, SyncMode, SyncOutcome,
     SyncReport, SyncRequest,
 };
-pub use provider::{AniListProvider, JikanProvider, KitsuProvider, RemotePage, RemoteProvider};
+pub use provider::{
+    AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, RemotePage, RemoteProvider,
+    TvmazeProvider,
+};
 pub use remote::{RemoteApi, RemoteCollection, RemoteSource};

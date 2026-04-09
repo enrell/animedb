@@ -1,6 +1,8 @@
 use crate::error::Result;
 use crate::model::{CanonicalMedia, MediaKind, SearchOptions};
-use crate::provider::{AniListProvider, JikanProvider, KitsuProvider, RemoteProvider};
+use crate::provider::{
+    AniListProvider, JikanProvider, KitsuProvider, RemoteProvider, TvmazeProvider,
+};
 
 /// Remote providers supported by the simplified facade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,6 +10,8 @@ pub enum RemoteSource {
     AniList,
     Jikan,
     Kitsu,
+    Tvmaze,
+    Imdb,
 }
 
 impl RemoteSource {
@@ -16,6 +20,8 @@ impl RemoteSource {
             Self::AniList => "anilist",
             Self::Jikan => "jikan",
             Self::Kitsu => "kitsu",
+            Self::Tvmaze => "tvmaze",
+            Self::Imdb => "imdb",
         }
     }
 }
@@ -55,6 +61,16 @@ impl RemoteApi {
         Self::new(RemoteSource::Kitsu)
     }
 
+    /// Creates a TVmaze facade.
+    pub fn tvmaze() -> Self {
+        Self::new(RemoteSource::Tvmaze)
+    }
+
+    /// Creates an IMDb facade.
+    pub fn imdb() -> Self {
+        Self::new(RemoteSource::Imdb)
+    }
+
     pub fn source(&self) -> RemoteSource {
         self.source
     }
@@ -65,6 +81,10 @@ impl RemoteApi {
             RemoteSource::AniList => AniListProvider::default().search(query, options),
             RemoteSource::Jikan => JikanProvider::default().search(query, options),
             RemoteSource::Kitsu => KitsuProvider::default().search(query, options),
+            RemoteSource::Tvmaze => TvmazeProvider::default().search(query, options),
+            RemoteSource::Imdb => Err(crate::error::Error::Validation(
+                "IMDb remote search requires downloading the full dataset; use sync instead".into(),
+            )),
         }
     }
 
@@ -119,6 +139,10 @@ impl RemoteCollection {
             RemoteSource::AniList => AniListProvider::default().search(query, self.options.clone()),
             RemoteSource::Jikan => JikanProvider::default().search(query, self.options.clone()),
             RemoteSource::Kitsu => KitsuProvider::default().search(query, self.options.clone()),
+            RemoteSource::Tvmaze => TvmazeProvider::default().search(query, self.options.clone()),
+            RemoteSource::Imdb => Err(crate::error::Error::Validation(
+                "IMDb remote search requires downloading the full dataset; use sync instead".into(),
+            )),
         }
     }
 
@@ -128,6 +152,13 @@ impl RemoteCollection {
             RemoteSource::AniList => AniListProvider::default().get_by_id(media_kind, source_id)?,
             RemoteSource::Jikan => JikanProvider::default().get_by_id(media_kind, source_id)?,
             RemoteSource::Kitsu => KitsuProvider::default().get_by_id(media_kind, source_id)?,
+            RemoteSource::Tvmaze => TvmazeProvider::default().get_by_id(media_kind, source_id)?,
+            RemoteSource::Imdb => {
+                return Err(crate::error::Error::Validation(
+                    "IMDb remote lookup requires downloading the full dataset; use sync instead"
+                        .into(),
+                ));
+            }
         };
 
         Ok(item.filter(|media| {

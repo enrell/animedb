@@ -7,9 +7,9 @@
 //! - a binary entry point in `main.rs` for running the service directly
 
 use animedb::{
-    AniListProvider, AnimeDb, CanonicalMedia, FieldProvenance, JikanProvider, KitsuProvider,
-    MediaKind, PersistedSyncState, RemoteCatalog, SearchHit, SearchOptions, SourceName,
-    StoredMedia, SyncMode, SyncReport, SyncRequest,
+    AniListProvider, AnimeDb, CanonicalMedia, FieldProvenance, ImdbProvider, JikanProvider,
+    KitsuProvider, MediaKind, PersistedSyncState, RemoteCatalog, SearchHit, SearchOptions,
+    SourceName, StoredMedia, SyncMode, SyncReport, SyncRequest, TvmazeProvider,
 };
 use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
 use async_graphql::{
@@ -214,9 +214,13 @@ impl MutationRoot {
                     }
                     SourceNameObject::Jikan => db.sync_from(&JikanProvider::default(), request)?,
                     SourceNameObject::Kitsu => db.sync_from(&KitsuProvider::default(), request)?,
+                    SourceNameObject::Tvmaze => {
+                        db.sync_from(&TvmazeProvider::default(), request)?
+                    }
+                    SourceNameObject::Imdb => db.sync_from(&ImdbProvider::default(), request)?,
                     SourceNameObject::Myanimelist => {
                         return Err(animedb::Error::Validation(
-                            "sync direto para MyAnimeList não existe; use AniList, Jikan ou Kitsu"
+                            "sync direto para MyAnimeList não existe; use AniList, Jikan, Kitsu, Tvmaze ou Imdb"
                                 .into(),
                         ));
                     }
@@ -277,6 +281,8 @@ struct SyncInput {
 enum MediaKindObject {
     Anime,
     Manga,
+    Show,
+    Movie,
 }
 
 impl MediaKindObject {
@@ -284,6 +290,8 @@ impl MediaKindObject {
         match self {
             Self::Anime => MediaKind::Anime,
             Self::Manga => MediaKind::Manga,
+            Self::Show => MediaKind::Show,
+            Self::Movie => MediaKind::Movie,
         }
     }
 }
@@ -294,6 +302,8 @@ enum SourceNameObject {
     Myanimelist,
     Jikan,
     Kitsu,
+    Tvmaze,
+    Imdb,
 }
 
 impl SourceNameObject {
@@ -303,6 +313,8 @@ impl SourceNameObject {
             Self::Myanimelist => SourceName::MyAnimeList,
             Self::Jikan => SourceName::Jikan,
             Self::Kitsu => SourceName::Kitsu,
+            Self::Tvmaze => SourceName::Tvmaze,
+            Self::Imdb => SourceName::Imdb,
         }
     }
 }
@@ -574,6 +586,8 @@ impl From<MediaKind> for MediaKindObject {
         match value {
             MediaKind::Anime => Self::Anime,
             MediaKind::Manga => Self::Manga,
+            MediaKind::Show => Self::Show,
+            MediaKind::Movie => Self::Movie,
         }
     }
 }
@@ -585,6 +599,8 @@ impl From<SourceName> for SourceNameObject {
             SourceName::MyAnimeList => Self::Myanimelist,
             SourceName::Jikan => Self::Jikan,
             SourceName::Kitsu => Self::Kitsu,
+            SourceName::Tvmaze => Self::Tvmaze,
+            SourceName::Imdb => Self::Imdb,
         }
     }
 }
@@ -661,6 +677,15 @@ fn search_remote(
                 .search(query, options)
                 .map(|items| items.into_iter().map(MediaObject::from_canonical).collect())
         }
+        SourceNameObject::Tvmaze => {
+            let remote = RemoteCatalog::new(TvmazeProvider::default());
+            remote
+                .search(query, options)
+                .map(|items| items.into_iter().map(MediaObject::from_canonical).collect())
+        }
+        SourceNameObject::Imdb => Err(animedb::Error::Validation(
+            "IMDb remote search requires downloading the full dataset; use sync instead".into(),
+        )),
         SourceNameObject::Myanimelist => Err(animedb::Error::Validation(
             "consulta remota direta para MyAnimeList nao esta disponivel".into(),
         )),
@@ -678,6 +703,7 @@ fn get_remote_media(
             let collection = match media_kind {
                 MediaKindObject::Anime => remote.anime_metadata(),
                 MediaKindObject::Manga => remote.manga_metadata(),
+                MediaKindObject::Show | MediaKindObject::Movie => remote.anime_metadata(),
             };
             collection
                 .by_id(source_id)
@@ -688,6 +714,7 @@ fn get_remote_media(
             let collection = match media_kind {
                 MediaKindObject::Anime => remote.anime_metadata(),
                 MediaKindObject::Manga => remote.manga_metadata(),
+                MediaKindObject::Show | MediaKindObject::Movie => remote.anime_metadata(),
             };
             collection
                 .by_id(source_id)
@@ -698,11 +725,22 @@ fn get_remote_media(
             let collection = match media_kind {
                 MediaKindObject::Anime => remote.anime_metadata(),
                 MediaKindObject::Manga => remote.manga_metadata(),
+                MediaKindObject::Show | MediaKindObject::Movie => remote.anime_metadata(),
             };
             collection
                 .by_id(source_id)
                 .map(|media| media.map(MediaObject::from_canonical))
         }
+        SourceNameObject::Tvmaze => {
+            let remote = RemoteCatalog::new(TvmazeProvider::default());
+            let collection = remote.show_metadata();
+            collection
+                .by_id(source_id)
+                .map(|media| media.map(MediaObject::from_canonical))
+        }
+        SourceNameObject::Imdb => Err(animedb::Error::Validation(
+            "IMDb remote lookup requires downloading the full dataset; use sync instead".into(),
+        )),
         SourceNameObject::Myanimelist => Err(animedb::Error::Validation(
             "consulta remota direta para MyAnimeList nao esta disponivel".into(),
         )),
@@ -713,6 +751,8 @@ fn sync_with_max_pages(db: &mut AnimeDb, max_pages: usize) -> animedb::Result<Sy
     let anilist = AniListProvider::default();
     let jikan = JikanProvider::default();
     let kitsu = KitsuProvider::default();
+    let tvmaze = TvmazeProvider::default();
+    let imdb = ImdbProvider::default();
     let mut outcomes = Vec::new();
 
     for media_kind in [MediaKind::Anime, MediaKind::Manga] {
@@ -736,6 +776,26 @@ fn sync_with_max_pages(db: &mut AnimeDb, max_pages: usize) -> animedb::Result<Sy
             db.sync_from(
                 &kitsu,
                 SyncRequest::new(SourceName::Kitsu)
+                    .with_media_kind(media_kind)
+                    .with_max_pages(max_pages),
+            )?,
+        );
+    }
+
+    outcomes.push(
+        db.sync_from(
+            &tvmaze,
+            SyncRequest::new(SourceName::Tvmaze)
+                .with_media_kind(MediaKind::Show)
+                .with_max_pages(max_pages),
+        )?,
+    );
+
+    for media_kind in [MediaKind::Show, MediaKind::Movie] {
+        outcomes.push(
+            db.sync_from(
+                &imdb,
+                SyncRequest::new(SourceName::Imdb)
                     .with_media_kind(media_kind)
                     .with_max_pages(max_pages),
             )?,

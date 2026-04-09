@@ -1,4 +1,4 @@
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error as StdError;
@@ -12,7 +12,9 @@ use crate::model::{
     SearchOptions, SourceName, SourcePayload, StoredMedia, SyncCursor, SyncMode, SyncOutcome,
     SyncReport, SyncRequest,
 };
-use crate::provider::{AniListProvider, JikanProvider, KitsuProvider, RemoteProvider};
+use crate::provider::{
+    AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, RemoteProvider, TvmazeProvider,
+};
 use crate::remote::{RemoteApi, RemoteSource};
 
 /// Local-first entry point for the SQLite-backed catalog.
@@ -85,6 +87,22 @@ impl AnimeDb {
         self.sync_from(
             &KitsuProvider::default(),
             SyncRequest::new(SourceName::Kitsu).with_media_kind(media_kind),
+        )
+    }
+
+    /// Syncs TVmaze show records into the local database.
+    pub fn sync_tvmaze(&mut self) -> Result<SyncOutcome> {
+        self.sync_from(
+            &TvmazeProvider::default(),
+            SyncRequest::new(SourceName::Tvmaze).with_media_kind(MediaKind::Show),
+        )
+    }
+
+    /// Syncs IMDb records for one media kind into the local database.
+    pub fn sync_imdb(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
+        self.sync_from(
+            &ImdbProvider::default(),
+            SyncRequest::new(SourceName::Imdb).with_media_kind(media_kind),
         )
     }
 
@@ -496,21 +514,37 @@ impl AnimeDb {
     }
 
     pub fn sync_default_sources(&mut self) -> Result<SyncReport> {
-        let provider = AniListProvider::default();
+        let anilist = AniListProvider::default();
+        let jikan = JikanProvider::default();
+        let kitsu = KitsuProvider::default();
+        let tvmaze = TvmazeProvider::default();
+        let imdb = ImdbProvider::default();
         let mut outcomes = Vec::new();
 
         for media_kind in [MediaKind::Anime, MediaKind::Manga] {
             outcomes.push(self.sync_from(
-                &provider,
+                &anilist,
                 SyncRequest::new(SourceName::AniList).with_media_kind(media_kind),
             )?);
             outcomes.push(self.sync_from(
-                &JikanProvider::default(),
+                &jikan,
                 SyncRequest::new(SourceName::Jikan).with_media_kind(media_kind),
             )?);
             outcomes.push(self.sync_from(
-                &KitsuProvider::default(),
+                &kitsu,
                 SyncRequest::new(SourceName::Kitsu).with_media_kind(media_kind),
+            )?);
+        }
+
+        outcomes.push(self.sync_from(
+            &tvmaze,
+            SyncRequest::new(SourceName::Tvmaze).with_media_kind(MediaKind::Show),
+        )?);
+
+        for media_kind in [MediaKind::Show, MediaKind::Movie] {
+            outcomes.push(self.sync_from(
+                &imdb,
+                SyncRequest::new(SourceName::Imdb).with_media_kind(media_kind),
             )?);
         }
 
@@ -624,7 +658,7 @@ impl AnimeDb {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
 
-        if version >= 3 {
+        if version >= 4 {
             return Ok(());
         }
 
@@ -635,7 +669,7 @@ impl AnimeDb {
 
                 CREATE TABLE IF NOT EXISTS media (
                     id INTEGER PRIMARY KEY,
-                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga')),
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
                     title_display TEXT NOT NULL,
                     title_romaji TEXT,
                     title_english TEXT,
@@ -675,7 +709,7 @@ impl AnimeDb {
 
                 CREATE TABLE IF NOT EXISTS media_external_id (
                     media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga')),
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
                     source TEXT NOT NULL,
                     source_id TEXT NOT NULL,
                     url TEXT,
@@ -685,7 +719,7 @@ impl AnimeDb {
 
                 CREATE TABLE IF NOT EXISTS source_record (
                     media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga')),
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
                     source TEXT NOT NULL,
                     source_id TEXT NOT NULL,
                     url TEXT,
@@ -868,6 +902,104 @@ impl AnimeDb {
                 );
 
                 PRAGMA user_version = 3;
+                COMMIT;
+                "#,
+            )?;
+        }
+
+        if version < 4 {
+            self.conn.execute_batch(
+                r#"
+                BEGIN;
+
+                CREATE TABLE IF NOT EXISTS media_v4 (
+                    id INTEGER PRIMARY KEY,
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
+                    title_display TEXT NOT NULL,
+                    title_romaji TEXT,
+                    title_english TEXT,
+                    title_native TEXT,
+                    synopsis TEXT,
+                    format TEXT,
+                    status TEXT,
+                    season TEXT,
+                    season_year INTEGER,
+                    episodes INTEGER,
+                    chapters INTEGER,
+                    volumes INTEGER,
+                    country_of_origin TEXT,
+                    cover_image TEXT,
+                    banner_image TEXT,
+                    provider_rating REAL,
+                    nsfw INTEGER NOT NULL DEFAULT 0,
+                    tags_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(tags_json)),
+                    genres_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(genres_json)),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                INSERT OR IGNORE INTO media_v4 (
+                    id, media_kind, title_display, title_romaji, title_english, title_native,
+                    synopsis, format, status, season, season_year, episodes, chapters, volumes,
+                    country_of_origin, cover_image, banner_image, provider_rating, nsfw,
+                    tags_json, genres_json, created_at, updated_at
+                )
+                SELECT
+                    id, media_kind, title_display, title_romaji, title_english, title_native,
+                    synopsis, format, status, season, season_year, episodes, chapters, volumes,
+                    country_of_origin, cover_image, banner_image, provider_rating, nsfw,
+                    tags_json, genres_json, created_at, updated_at
+                FROM media;
+
+                DROP TABLE media;
+                ALTER TABLE media_v4 RENAME TO media;
+
+                CREATE TABLE IF NOT EXISTS media_external_id_v4 (
+                    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
+                    source TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    url TEXT,
+                    UNIQUE(source, media_kind, source_id),
+                    UNIQUE(media_id, source)
+                );
+
+                INSERT OR IGNORE INTO media_external_id_v4 (media_id, media_kind, source, source_id, url)
+                SELECT media_id, media_kind, source, source_id, url FROM media_external_id;
+
+                DROP TABLE media_external_id;
+                ALTER TABLE media_external_id_v4 RENAME TO media_external_id;
+
+                CREATE TABLE IF NOT EXISTS source_record_v4 (
+                    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
+                    source TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    url TEXT,
+                    remote_updated_at TEXT,
+                    fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    raw_json TEXT CHECK(raw_json IS NULL OR json_valid(raw_json)),
+                    payload_hash TEXT,
+                    UNIQUE(source, media_kind, source_id)
+                );
+
+                INSERT OR IGNORE INTO source_record_v4 (
+                    media_id, media_kind, source, source_id, url, remote_updated_at, fetched_at, raw_json, payload_hash
+                )
+                SELECT media_id, media_kind, source, source_id, url, remote_updated_at, fetched_at, raw_json, payload_hash
+                FROM source_record;
+
+                DROP TABLE source_record;
+                ALTER TABLE source_record_v4 RENAME TO source_record;
+
+                CREATE INDEX IF NOT EXISTS media_alias_normalized_idx
+                    ON media_alias(normalized_alias);
+                CREATE INDEX IF NOT EXISTS media_kind_idx
+                    ON media(media_kind);
+                CREATE INDEX IF NOT EXISTS media_season_year_idx
+                    ON media(season_year);
+
+                PRAGMA user_version = 4;
                 COMMIT;
                 "#,
             )?;
@@ -2196,49 +2328,721 @@ mod tests {
     }
 
     #[test]
-    fn merges_sources_into_one_canonical_record() {
+    fn upsert_show_with_tvmaze_source() {
         let mut db = AnimeDb::open_in_memory().expect("in-memory db");
-        let first_id = db.upsert_media(&sample_media()).expect("first upsert");
-        let second_id = db.upsert_media(&jikan_variant()).expect("second upsert");
+        let show = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Breaking Bad".into(),
+            title_romaji: None,
+            title_english: Some("Breaking Bad".into()),
+            title_native: None,
+            synopsis: Some("A chemistry teacher turns to making meth.".into()),
+            format: None,
+            status: Some("Ended".into()),
+            season: Some("2008".into()),
+            season_year: Some(2008),
+            episodes: Some(62),
+            chapters: None,
+            volumes: None,
+            country_of_origin: Some("US".into()),
+            cover_image: Some(
+                "https://static.tvmaze.com/uploads/images/original_untouched/0/2000.jpg".into(),
+            ),
+            banner_image: None,
+            provider_rating: Some(0.95),
+            nsfw: false,
+            aliases: vec!["BB".into()],
+            genres: vec!["Drama".into(), "Crime".into()],
+            tags: vec![],
+            external_ids: vec![
+                ExternalId {
+                    source: SourceName::Tvmaze,
+                    source_id: "169".into(),
+                    url: Some("https://www.tvmaze.com/shows/169/breaking-bad".into()),
+                },
+                ExternalId {
+                    source: SourceName::Imdb,
+                    source_id: "tt0903747".into(),
+                    url: Some("https://www.imdb.com/title/tt0903747".into()),
+                },
+            ],
+            source_payloads: vec![SourcePayload {
+                source: SourceName::Tvmaze,
+                source_id: "169".into(),
+                url: Some("https://www.tvmaze.com/shows/169/breaking-bad".into()),
+                remote_updated_at: None,
+                raw_json: None,
+            }],
+            field_provenance: Vec::new(),
+        };
+
+        let media_id = db.upsert_media(&show).expect("upsert show");
+        let loaded = db.get_media(media_id).expect("load show");
+
+        assert_eq!(loaded.media_kind, MediaKind::Show);
+        assert_eq!(loaded.title_display, "Breaking Bad");
+        assert_eq!(loaded.season_year, Some(2008));
+        assert!(loaded
+            .external_ids
+            .iter()
+            .any(|id| id.source == SourceName::Tvmaze));
+        assert!(loaded
+            .external_ids
+            .iter()
+            .any(|id| id.source == SourceName::Imdb));
+    }
+
+    #[test]
+    fn upsert_movie_with_imdb_source() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+        let movie = CanonicalMedia {
+            media_kind: MediaKind::Movie,
+            title_display: "The Shawshank Redemption".into(),
+            title_romaji: None,
+            title_english: Some("The Shawshank Redemption".into()),
+            title_native: None,
+            synopsis: None,
+            format: Some("movie".into()),
+            status: None,
+            season: Some("1994".into()),
+            season_year: Some(1994),
+            episodes: Some(142),
+            chapters: None,
+            volumes: None,
+            country_of_origin: Some("US".into()),
+            cover_image: None,
+            banner_image: None,
+            provider_rating: Some(0.97),
+            nsfw: false,
+            aliases: vec!["Shawshank".into()],
+            genres: vec!["Drama".into()],
+            tags: vec![],
+            external_ids: vec![ExternalId {
+                source: SourceName::Imdb,
+                source_id: "tt0111161".into(),
+                url: Some("https://www.imdb.com/title/tt0111161".into()),
+            }],
+            source_payloads: vec![SourcePayload {
+                source: SourceName::Imdb,
+                source_id: "tt0111161".into(),
+                url: Some("https://www.imdb.com/title/tt0111161".into()),
+                remote_updated_at: None,
+                raw_json: None,
+            }],
+            field_provenance: Vec::new(),
+        };
+
+        let media_id = db.upsert_media(&movie).expect("upsert movie");
+        let loaded = db.get_media(media_id).expect("load movie");
+
+        assert_eq!(loaded.media_kind, MediaKind::Movie);
+        assert_eq!(loaded.title_display, "The Shawshank Redemption");
+        assert_eq!(loaded.season_year, Some(1994));
+    }
+
+    #[test]
+    fn search_show_by_kind() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let anime = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "Monster".into(),
+            title_romaji: Some("Monster".into()),
+            title_english: Some("Monster".into()),
+            title_native: None,
+            synopsis: Some("A surgeon chases a killer.".into()),
+            format: Some("TV".into()),
+            status: None,
+            season: None,
+            season_year: None,
+            episodes: None,
+            chapters: None,
+            volumes: None,
+            country_of_origin: None,
+            cover_image: None,
+            banner_image: None,
+            provider_rating: None,
+            nsfw: false,
+            aliases: vec![],
+            genres: vec![],
+            tags: vec![],
+            external_ids: vec![ExternalId {
+                source: SourceName::AniList,
+                source_id: "19".into(),
+                url: None,
+            }],
+            source_payloads: vec![],
+            field_provenance: Vec::new(),
+        };
+
+        let show = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Breaking Bad".into(),
+            title_romaji: None,
+            title_english: None,
+            title_native: None,
+            synopsis: Some("A chemistry teacher makes meth.".into()),
+            format: None,
+            status: None,
+            season: None,
+            season_year: None,
+            episodes: None,
+            chapters: None,
+            volumes: None,
+            country_of_origin: None,
+            cover_image: None,
+            banner_image: None,
+            provider_rating: None,
+            nsfw: false,
+            aliases: vec![],
+            genres: vec![],
+            tags: vec![],
+            external_ids: vec![ExternalId {
+                source: SourceName::Tvmaze,
+                source_id: "169".into(),
+                url: None,
+            }],
+            source_payloads: vec![],
+            field_provenance: Vec::new(),
+        };
+
+        db.upsert_media(&anime).expect("upsert anime");
+        db.upsert_media(&show).expect("upsert show");
+
+        let show_hits = db
+            .search(
+                "teacher",
+                SearchOptions {
+                    limit: 10,
+                    offset: 0,
+                    media_kind: Some(MediaKind::Show),
+                    format: None,
+                },
+            )
+            .expect("search show");
+
+        assert_eq!(show_hits.len(), 1);
+        assert_eq!(show_hits[0].title_display, "Breaking Bad");
+        assert_eq!(show_hits[0].media_kind, MediaKind::Show);
+
+        let anime_hits = db
+            .search(
+                "surgeon",
+                SearchOptions {
+                    limit: 10,
+                    offset: 0,
+                    media_kind: Some(MediaKind::Anime),
+                    format: None,
+                },
+            )
+            .expect("search anime");
+
+        assert_eq!(anime_hits.len(), 1);
+        assert_eq!(anime_hits[0].title_display, "Monster");
+        assert_eq!(anime_hits[0].media_kind, MediaKind::Anime);
+    }
+
+    #[test]
+    fn merges_tvmaze_and_imdb_into_one_show() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let tvmaze_show = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Breaking Bad".into(),
+            title_romaji: None,
+            title_english: Some("Breaking Bad".into()),
+            title_native: None,
+            synopsis: Some("A high school chemistry teacher diagnosed with lung cancer turns to manufacturing methamphetamine.".into()),
+            format: None,
+            status: Some("Ended".into()),
+            season: Some("2008".into()),
+            season_year: Some(2008),
+            episodes: Some(62),
+            chapters: None,
+            volumes: None,
+            country_of_origin: Some("US".into()),
+            cover_image: Some("https://static.tvmaze.com/uploads/images/original_untouched/0/2000.jpg".into()),
+            banner_image: None,
+            provider_rating: Some(0.96),
+            nsfw: false,
+            aliases: vec!["BB".into()],
+            genres: vec!["Drama".into(), "Crime".into()],
+            tags: vec![],
+            external_ids: vec![
+                ExternalId {
+                    source: SourceName::Tvmaze,
+                    source_id: "169".into(),
+                    url: Some("https://www.tvmaze.com/shows/169/breaking-bad".into()),
+                },
+                ExternalId {
+                    source: SourceName::Imdb,
+                    source_id: "tt0903747".into(),
+                    url: Some("https://www.imdb.com/title/tt0903747".into()),
+                },
+            ],
+            source_payloads: vec![SourcePayload {
+                source: SourceName::Tvmaze,
+                source_id: "169".into(),
+                url: Some("https://www.tvmaze.com/shows/169/breaking-bad".into()),
+                remote_updated_at: None,
+                raw_json: None,
+            }],
+            field_provenance: Vec::new(),
+        };
+
+        let imdb_show = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Breaking Bad".into(),
+            title_romaji: None,
+            title_english: None,
+            title_native: None,
+            synopsis: None,
+            format: Some("tvSeries".into()),
+            status: None,
+            season: Some("2008".into()),
+            season_year: Some(2008),
+            episodes: Some(62),
+            chapters: None,
+            volumes: None,
+            country_of_origin: Some("US".into()),
+            cover_image: None,
+            banner_image: None,
+            provider_rating: Some(0.99),
+            nsfw: false,
+            aliases: vec![],
+            genres: vec!["Crime".into(), "Drama".into(), "Thriller".into()],
+            tags: vec![],
+            external_ids: vec![ExternalId {
+                source: SourceName::Imdb,
+                source_id: "tt0903747".into(),
+                url: Some("https://www.imdb.com/title/tt0903747".into()),
+            }],
+            source_payloads: vec![SourcePayload {
+                source: SourceName::Imdb,
+                source_id: "tt0903747".into(),
+                url: Some("https://www.imdb.com/title/tt0903747".into()),
+                remote_updated_at: None,
+                raw_json: None,
+            }],
+            field_provenance: Vec::new(),
+        };
+
+        let first_id = db.upsert_media(&tvmaze_show).expect("upsert tvmaze");
+        let second_id = db.upsert_media(&imdb_show).expect("upsert imdb");
 
         assert_eq!(first_id, second_id);
 
         let loaded = db
-            .get_by_external_id(SourceName::MyAnimeList, "19")
-            .expect("lookup merged");
+            .get_by_external_id(SourceName::Imdb, "tt0903747")
+            .expect("lookup by imdb");
 
-        assert_eq!(loaded.id, first_id);
-        assert!(
-            loaded
-                .external_ids
-                .iter()
-                .any(|id| id.source == SourceName::AniList)
+        assert_eq!(loaded.title_display, "Breaking Bad");
+        assert_eq!(loaded.media_kind, MediaKind::Show);
+        assert!(loaded
+            .external_ids
+            .iter()
+            .any(|id| id.source == SourceName::Tvmaze));
+        assert!(loaded
+            .external_ids
+            .iter()
+            .any(|id| id.source == SourceName::Imdb));
+        assert!(loaded.genres.contains(&"Drama".to_string()));
+        assert!(loaded.genres.contains(&"Crime".to_string()));
+    }
+
+    #[test]
+    fn same_title_different_kinds_are_separate_records() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let anime = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "The Matrix".into(),
+            title_english: Some("The Matrix".into()),
+            ..minimal_media(SourceName::AniList, "100")
+        };
+
+        let movie = CanonicalMedia {
+            media_kind: MediaKind::Movie,
+            title_display: "The Matrix".into(),
+            title_english: Some("The Matrix".into()),
+            ..minimal_media(SourceName::Imdb, "tt0133093")
+        };
+
+        let anime_id = db.upsert_media(&anime).expect("upsert anime");
+        let movie_id = db.upsert_media(&movie).expect("upsert movie");
+
+        assert_ne!(
+            anime_id, movie_id,
+            "different kinds must be separate records"
         );
-        assert!(
-            loaded
-                .external_ids
-                .iter()
-                .any(|id| id.source == SourceName::Jikan)
-        );
+
+        let loaded_anime = db.get_media(anime_id).expect("load anime");
+        let loaded_movie = db.get_media(movie_id).expect("load movie");
+        assert_eq!(loaded_anime.media_kind, MediaKind::Anime);
+        assert_eq!(loaded_movie.media_kind, MediaKind::Movie);
+    }
+
+    #[test]
+    fn same_imdb_id_different_kinds_does_not_conflict() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let show = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "The Peripheral".into(),
+            ..minimal_media_with_external_ids(
+                SourceName::Imdb,
+                "tt11111",
+                vec![
+                    ExternalId {
+                        source: SourceName::Imdb,
+                        source_id: "tt11111".into(),
+                        url: None,
+                    },
+                    ExternalId {
+                        source: SourceName::Tvmaze,
+                        source_id: "500".into(),
+                        url: None,
+                    },
+                ],
+            )
+        };
+
+        let movie = CanonicalMedia {
+            media_kind: MediaKind::Movie,
+            title_display: "The Peripheral".into(),
+            ..minimal_media_with_external_ids(
+                SourceName::Imdb,
+                "tt22222",
+                vec![
+                    ExternalId {
+                        source: SourceName::Imdb,
+                        source_id: "tt22222".into(),
+                        url: None,
+                    },
+                    ExternalId {
+                        source: SourceName::Tvmaze,
+                        source_id: "501".into(),
+                        url: None,
+                    },
+                ],
+            )
+        };
+
+        let show_id = db.upsert_media(&show).expect("upsert show");
+        let movie_id = db.upsert_media(&movie).expect("upsert movie");
+
+        assert_ne!(show_id, movie_id);
+
+        let show_loaded = db
+            .get_by_external_id_and_kind(SourceName::Imdb, MediaKind::Show, "tt11111")
+            .expect("lookup show by kind");
+        assert_eq!(show_loaded.media_kind, MediaKind::Show);
+
+        let movie_loaded = db
+            .get_by_external_id_and_kind(SourceName::Imdb, MediaKind::Movie, "tt22222")
+            .expect("lookup movie by kind");
+        assert_eq!(movie_loaded.media_kind, MediaKind::Movie);
+    }
+
+    #[test]
+    fn search_movie_by_kind_isolation() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let show = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "The Office".into(),
+            synopsis: Some("A mockumentary about a paper company.".into()),
+            ..minimal_media(SourceName::Tvmaze, "100")
+        };
+
+        let movie = CanonicalMedia {
+            media_kind: MediaKind::Movie,
+            title_display: "The Office Space".into(),
+            synopsis: Some("A comedy about corporate life.".into()),
+            ..minimal_media(SourceName::Imdb, "tt01015011")
+        };
+
+        db.upsert_media(&show).expect("upsert show");
+        db.upsert_media(&movie).expect("upsert movie");
+
+        let movie_hits = db
+            .search(
+                "office",
+                SearchOptions {
+                    limit: 10,
+                    offset: 0,
+                    media_kind: Some(MediaKind::Movie),
+                    format: None,
+                },
+            )
+            .expect("search movie");
+
+        assert_eq!(movie_hits.len(), 1);
+        assert_eq!(movie_hits[0].media_kind, MediaKind::Movie);
+        assert_eq!(movie_hits[0].title_display, "The Office Space");
+
+        let show_hits = db
+            .search(
+                "office",
+                SearchOptions {
+                    limit: 10,
+                    offset: 0,
+                    media_kind: Some(MediaKind::Show),
+                    format: None,
+                },
+            )
+            .expect("search show");
+
+        assert_eq!(show_hits.len(), 1);
+        assert_eq!(show_hits[0].media_kind, MediaKind::Show);
+        assert_eq!(show_hits[0].title_display, "The Office");
+    }
+
+    #[test]
+    fn search_all_kinds_returns_both() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let show = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Dark".into(),
+            synopsis: Some("A family saga with time travel.".into()),
+            ..minimal_media(SourceName::Tvmaze, "200")
+        };
+
+        let movie = CanonicalMedia {
+            media_kind: MediaKind::Movie,
+            title_display: "Dark City".into(),
+            synopsis: Some("A man discovers reality is manipulated.".into()),
+            ..minimal_media(SourceName::Imdb, "tt011911711")
+        };
+
+        db.upsert_media(&show).expect("upsert show");
+        db.upsert_media(&movie).expect("upsert movie");
+
+        let all_hits = db
+            .search(
+                "dark",
+                SearchOptions {
+                    limit: 10,
+                    offset: 0,
+                    media_kind: None,
+                    format: None,
+                },
+            )
+            .expect("search all kinds");
+
+        assert_eq!(all_hits.len(), 2);
+    }
+
+    #[test]
+    fn update_show_preserves_kind() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let original = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Stranger Things".into(),
+            synopsis: Some("A girl with psychokinetic powers.".into()),
+            ..minimal_media(SourceName::Tvmaze, "300")
+        };
+
+        let id_first = db.upsert_media(&original).expect("first upsert");
+
+        let updated = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Stranger Things".into(),
+            synopsis: Some("A girl with powers battles monsters from the Upside Down.".into()),
+            ..minimal_media(SourceName::Tvmaze, "300")
+        };
+
+        let id_second = db.upsert_media(&updated).expect("second upsert");
+
+        assert_eq!(id_first, id_second);
+
+        let loaded = db.get_media(id_first).expect("load");
+        assert_eq!(loaded.media_kind, MediaKind::Show);
         assert_eq!(
             loaded.synopsis.as_deref(),
-            jikan_variant().synopsis.as_deref()
+            Some("A girl with powers battles monsters from the Upside Down.")
         );
-        assert_eq!(
-            loaded.cover_image.as_deref(),
-            jikan_variant().cover_image.as_deref()
-        );
-        assert!(
-            loaded
-                .field_provenance
-                .iter()
-                .any(|item| item.field_name == "synopsis" && item.source == SourceName::Jikan)
-        );
-        assert!(
-            loaded
-                .field_provenance
-                .iter()
-                .any(|item| item.field_name == "cover_image" && item.source == SourceName::Jikan)
-        );
+    }
+
+    #[test]
+    fn nsfw_flag_from_imdb_adult_content() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let adult_movie = CanonicalMedia {
+            media_kind: MediaKind::Movie,
+            title_display: "Adult Movie".into(),
+            nsfw: true,
+            ..minimal_media(SourceName::Imdb, "tt9999999")
+        };
+
+        let id = db.upsert_media(&adult_movie).expect("upsert");
+        let loaded = db.get_media(id).expect("load");
+        assert!(loaded.nsfw);
+    }
+
+    #[test]
+    fn empty_synopsis_and_no_cover_from_imdb() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let sparse_movie = CanonicalMedia {
+            media_kind: MediaKind::Movie,
+            title_display: "Some Obscure Film".into(),
+            synopsis: None,
+            cover_image: None,
+            banner_image: None,
+            provider_rating: None,
+            ..minimal_media(SourceName::Imdb, "tt0000001")
+        };
+
+        let id = db.upsert_media(&sparse_movie).expect("upsert");
+        let loaded = db.get_media(id).expect("load");
+
+        assert!(loaded.synopsis.is_none());
+        assert!(loaded.cover_image.is_none());
+        assert!(loaded.banner_image.is_none());
+        assert_eq!(loaded.provider_rating, None);
+    }
+
+    #[test]
+    fn merge_prefers_higher_rating_from_imdb_over_tvmaze() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let tvmaze_entry = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Chernobyl".into(),
+            provider_rating: Some(0.95),
+            ..minimal_media_with_external_ids(
+                SourceName::Tvmaze,
+                "455",
+                vec![
+                    ExternalId {
+                        source: SourceName::Tvmaze,
+                        source_id: "455".into(),
+                        url: None,
+                    },
+                    ExternalId {
+                        source: SourceName::Imdb,
+                        source_id: "tt739642".into(),
+                        url: None,
+                    },
+                ],
+            )
+        };
+
+        let imdb_entry = CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Chernobyl".into(),
+            provider_rating: Some(0.99),
+            ..minimal_media_with_external_ids(
+                SourceName::Imdb,
+                "tt739642",
+                vec![ExternalId {
+                    source: SourceName::Imdb,
+                    source_id: "tt739642".into(),
+                    url: None,
+                }],
+            )
+        };
+
+        let first = db.upsert_media(&tvmaze_entry).expect("upsert tvmaze");
+        let second = db.upsert_media(&imdb_entry).expect("upsert imdb");
+        assert_eq!(first, second);
+
+        let loaded = db.get_media(first).expect("load");
+        assert_eq!(loaded.provider_rating, Some(0.99));
+    }
+
+    #[test]
+    fn invalid_media_kind_rejected() {
+        let result = "tvshow".parse::<MediaKind>();
+        assert!(result.is_err());
+        let result = "film".parse::<MediaKind>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_source_name_rejected() {
+        let result = "netflix".parse::<SourceName>();
+        assert!(result.is_err());
+    }
+
+    fn minimal_media(source: SourceName, source_id: &str) -> CanonicalMedia {
+        CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Test Title".into(),
+            title_romaji: None,
+            title_english: None,
+            title_native: None,
+            synopsis: None,
+            format: None,
+            status: None,
+            season: None,
+            season_year: None,
+            episodes: None,
+            chapters: None,
+            volumes: None,
+            country_of_origin: None,
+            cover_image: None,
+            banner_image: None,
+            provider_rating: None,
+            nsfw: false,
+            aliases: vec![],
+            genres: vec![],
+            tags: vec![],
+            external_ids: vec![ExternalId {
+                source,
+                source_id: source_id.into(),
+                url: None,
+            }],
+            source_payloads: vec![SourcePayload {
+                source,
+                source_id: source_id.into(),
+                url: None,
+                remote_updated_at: None,
+                raw_json: None,
+            }],
+            field_provenance: Vec::new(),
+        }
+    }
+
+    fn minimal_media_with_external_ids(
+        source: SourceName,
+        source_id: &str,
+        external_ids: Vec<ExternalId>,
+    ) -> CanonicalMedia {
+        CanonicalMedia {
+            media_kind: MediaKind::Show,
+            title_display: "Test Title".into(),
+            title_romaji: None,
+            title_english: None,
+            title_native: None,
+            synopsis: None,
+            format: None,
+            status: None,
+            season: None,
+            season_year: None,
+            episodes: None,
+            chapters: None,
+            volumes: None,
+            country_of_origin: None,
+            cover_image: None,
+            banner_image: None,
+            provider_rating: None,
+            nsfw: false,
+            aliases: vec![],
+            genres: vec![],
+            tags: vec![],
+            external_ids,
+            source_payloads: vec![SourcePayload {
+                source,
+                source_id: source_id.into(),
+                url: None,
+                remote_updated_at: None,
+                raw_json: None,
+            }],
+            field_provenance: Vec::new(),
+        }
     }
 }

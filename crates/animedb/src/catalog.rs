@@ -47,6 +47,20 @@ impl<P: RemoteProvider> RemoteCatalog<P> {
                 .with_format("MOVIE"),
         )
     }
+
+    pub fn show_metadata(&self) -> RemoteMetadataCollection<'_, P> {
+        RemoteMetadataCollection::new(
+            &self.provider,
+            SearchOptions::default().with_media_kind(MediaKind::Show),
+        )
+    }
+
+    pub fn tv_movie_metadata(&self) -> RemoteMetadataCollection<'_, P> {
+        RemoteMetadataCollection::new(
+            &self.provider,
+            SearchOptions::default().with_media_kind(MediaKind::Movie),
+        )
+    }
 }
 
 pub struct RemoteMetadataCollection<'a, P> {

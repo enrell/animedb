@@ -10,6 +10,8 @@ use crate::error::{Error, Result};
 pub enum MediaKind {
     Anime,
     Manga,
+    Show,
+    Movie,
 }
 
 impl MediaKind {
@@ -17,6 +19,8 @@ impl MediaKind {
         match self {
             Self::Anime => "anime",
             Self::Manga => "manga",
+            Self::Show => "show",
+            Self::Movie => "movie",
         }
     }
 }
@@ -34,6 +38,8 @@ impl FromStr for MediaKind {
         match value {
             "anime" | "ANIME" => Ok(Self::Anime),
             "manga" | "MANGA" => Ok(Self::Manga),
+            "show" | "SHOW" => Ok(Self::Show),
+            "movie" | "MOVIE" => Ok(Self::Movie),
             other => Err(Error::Validation(format!(
                 "unsupported media kind: {other}"
             ))),
@@ -48,6 +54,8 @@ pub enum SourceName {
     MyAnimeList,
     Jikan,
     Kitsu,
+    Tvmaze,
+    Imdb,
 }
 
 impl SourceName {
@@ -57,6 +65,8 @@ impl SourceName {
             Self::MyAnimeList => "myanimelist",
             Self::Jikan => "jikan",
             Self::Kitsu => "kitsu",
+            Self::Tvmaze => "tvmaze",
+            Self::Imdb => "imdb",
         }
     }
 }
@@ -76,6 +86,8 @@ impl FromStr for SourceName {
             "myanimelist" => Ok(Self::MyAnimeList),
             "jikan" => Ok(Self::Jikan),
             "kitsu" => Ok(Self::Kitsu),
+            "tvmaze" => Ok(Self::Tvmaze),
+            "imdb" => Ok(Self::Imdb),
             other => Err(Error::Validation(format!("unsupported source: {other}"))),
         }
     }
