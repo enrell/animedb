@@ -27,7 +27,8 @@ pub fn score_text_field(
     let field_quality_score = text_quality(field_name, value) * 0.35;
     let cover_score = 0.0;
     let consistency_score = consistency_bonus(candidate) * 0.20;
-    let total = provider_score + completeness_score + field_quality_score + cover_score + consistency_score;
+    let total =
+        provider_score + completeness_score + field_quality_score + cover_score + consistency_score;
 
     MergeDecision {
         value: value.to_string(),
@@ -67,9 +68,16 @@ pub fn score_cover_image(
     let completeness_score = text_completeness(value) * 0.10;
     let cover_quality_score = cover_quality(value) * 0.45;
     let consistency_score = consistency_bonus(candidate) * 0.15;
-    let freshness_score = candidate.provider_rating.unwrap_or_default().clamp(0.0, 1.0) * 0.10;
-    let total =
-        provider_score + completeness_score + cover_quality_score + consistency_score + freshness_score;
+    let freshness_score = candidate
+        .provider_rating
+        .unwrap_or_default()
+        .clamp(0.0, 1.0)
+        * 0.10;
+    let total = provider_score
+        + completeness_score
+        + cover_quality_score
+        + consistency_score
+        + freshness_score;
 
     MergeDecision {
         value: value.to_string(),
@@ -80,7 +88,11 @@ pub fn score_cover_image(
     }
 }
 
-pub fn score_boolean(source: SourceName, value: bool, candidate: &CanonicalMedia) -> MergeDecision<bool> {
+pub fn score_boolean(
+    source: SourceName,
+    value: bool,
+    candidate: &CanonicalMedia,
+) -> MergeDecision<bool> {
     let provider_score = provider_weight(source) * 0.30;
     let value_score = if value { 0.35 } else { 0.20 };
     let consistency_score = consistency_bonus(candidate) * 0.35;
@@ -107,7 +119,11 @@ fn text_quality(field_name: &str, value: &str) -> f64 {
     }
 
     let len = trimmed.chars().count() as f64;
-    let html_penalty = if trimmed.contains('<') || trimmed.contains('>') { 0.15 } else { 0.0 };
+    let html_penalty = if trimmed.contains('<') || trimmed.contains('>') {
+        0.15
+    } else {
+        0.0
+    };
     let newline_bonus = if trimmed.contains('\n') { 0.10 } else { 0.0 };
     let synopsis_bias = if field_name == "synopsis" {
         (len / 600.0).clamp(0.15, 1.0)

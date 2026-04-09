@@ -2,6 +2,7 @@ use crate::error::Result;
 use crate::model::{CanonicalMedia, MediaKind, SearchOptions};
 use crate::provider::{AniListProvider, JikanProvider, KitsuProvider, RemoteProvider};
 
+/// Remote providers supported by the simplified facade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteSource {
     AniList,
@@ -19,6 +20,10 @@ impl RemoteSource {
     }
 }
 
+/// Remote-first facade over the supported metadata providers.
+///
+/// This type is intended for clients that want normalized metadata access without creating
+/// or syncing a local SQLite catalog.
 pub struct RemoteApi {
     source: RemoteSource,
 }
@@ -30,18 +35,22 @@ impl Default for RemoteApi {
 }
 
 impl RemoteApi {
+    /// Creates a remote API facade for the selected provider.
     pub fn new(source: RemoteSource) -> Self {
         Self { source }
     }
 
+    /// Creates an AniList facade.
     pub fn anilist() -> Self {
         Self::new(RemoteSource::AniList)
     }
 
+    /// Creates a Jikan facade.
     pub fn jikan() -> Self {
         Self::new(RemoteSource::Jikan)
     }
 
+    /// Creates a Kitsu facade.
     pub fn kitsu() -> Self {
         Self::new(RemoteSource::Kitsu)
     }
@@ -50,6 +59,7 @@ impl RemoteApi {
         self.source
     }
 
+    /// Searches the selected provider directly.
     pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<CanonicalMedia>> {
         match self.source {
             RemoteSource::AniList => AniListProvider::default().search(query, options),
@@ -58,6 +68,7 @@ impl RemoteApi {
         }
     }
 
+    /// Narrows queries to anime records.
     pub fn anime_metadata(&self) -> RemoteCollection {
         RemoteCollection::new(
             self.source,
@@ -65,6 +76,7 @@ impl RemoteApi {
         )
     }
 
+    /// Narrows queries to manga records.
     pub fn manga_metadata(&self) -> RemoteCollection {
         RemoteCollection::new(
             self.source,
@@ -72,6 +84,7 @@ impl RemoteApi {
         )
     }
 
+    /// Narrows queries to anime movies.
     pub fn movie_metadata(&self) -> RemoteCollection {
         RemoteCollection::new(
             self.source,
@@ -82,6 +95,7 @@ impl RemoteApi {
     }
 }
 
+/// Filtered view over one remote provider and one media slice.
 pub struct RemoteCollection {
     source: RemoteSource,
     options: SearchOptions,

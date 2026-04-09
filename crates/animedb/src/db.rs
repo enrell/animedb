@@ -15,43 +15,56 @@ use crate::model::{
 use crate::provider::{AniListProvider, JikanProvider, KitsuProvider, RemoteProvider};
 use crate::remote::{RemoteApi, RemoteSource};
 
+/// Local-first entry point for the SQLite-backed catalog.
+///
+/// `AnimeDb` owns schema creation and migrations, provider sync, merge materialization,
+/// local queries, and access to the underlying SQLite connection when lower-level control
+/// is necessary.
 pub struct AnimeDb {
     conn: Connection,
 }
 
 impl AnimeDb {
+    /// Builds a remote-only facade for a selected provider.
     pub fn remote(source: RemoteSource) -> RemoteApi {
         RemoteApi::new(source)
     }
 
+    /// Builds a remote-only AniList facade.
     pub fn remote_anilist() -> RemoteApi {
         RemoteApi::anilist()
     }
 
+    /// Builds a remote-only Jikan facade.
     pub fn remote_jikan() -> RemoteApi {
         RemoteApi::jikan()
     }
 
+    /// Builds a remote-only Kitsu facade.
     pub fn remote_kitsu() -> RemoteApi {
         RemoteApi::kitsu()
     }
 
+    /// Creates or opens a database and performs the default bootstrap sync.
     pub fn generate_database(path: impl AsRef<Path>) -> Result<Self> {
         let (db, _) = Self::generate_database_with_report(path)?;
         Ok(db)
     }
 
+    /// Creates or opens a database and performs the default bootstrap sync, returning the report.
     pub fn generate_database_with_report(path: impl AsRef<Path>) -> Result<(Self, SyncReport)> {
         let mut db = Self::open(path)?;
         let report = db.sync_default_sources()?;
         Ok((db, report))
     }
 
+    /// Opens an existing database path and syncs the default providers into it.
     pub fn sync_database(path: impl AsRef<Path>) -> Result<SyncReport> {
         let mut db = Self::open(path)?;
         db.sync_default_sources()
     }
 
+    /// Syncs AniList records for one media kind into the local database.
     pub fn sync_anilist(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_from(
             &AniListProvider::default(),
@@ -59,6 +72,7 @@ impl AnimeDb {
         )
     }
 
+    /// Syncs Jikan records for one media kind into the local database.
     pub fn sync_jikan(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_from(
             &JikanProvider::default(),
@@ -66,6 +80,7 @@ impl AnimeDb {
         )
     }
 
+    /// Syncs Kitsu records for one media kind into the local database.
     pub fn sync_kitsu(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_from(
             &KitsuProvider::default(),
@@ -73,6 +88,7 @@ impl AnimeDb {
         )
     }
 
+    /// Opens or creates a SQLite catalog, applies runtime pragmas, and runs migrations.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open(path)?;
         let db = Self { conn };
@@ -81,6 +97,7 @@ impl AnimeDb {
         Ok(db)
     }
 
+    /// Opens an in-memory SQLite catalog with the same pragmas and migrations as a file-backed DB.
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let db = Self { conn };
@@ -89,6 +106,7 @@ impl AnimeDb {
         Ok(db)
     }
 
+    /// Exposes the underlying SQLite connection for advanced integrations.
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
@@ -191,7 +209,9 @@ impl AnimeDb {
             "SELECT DISTINCT media_id FROM media_external_id WHERE source = ?1 AND source_id = ?2 ORDER BY media_id",
         )?;
         let media_ids = stmt
-            .query_map(params![source.as_str(), source_id], |row| row.get::<_, i64>(0))?
+            .query_map(params![source.as_str(), source_id], |row| {
+                row.get::<_, i64>(0)
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let media_id = match media_ids.as_slice() {
@@ -937,6 +957,10 @@ impl AnimeDb {
     }
 }
 
+/// Typed query facade over one local media slice.
+///
+/// Use this through [`AnimeDb::anime_metadata`], [`AnimeDb::manga_metadata`], or
+/// [`AnimeDb::movie_metadata`] to avoid repeating search filters.
 pub struct MetadataCollection<'a> {
     db: &'a AnimeDb,
     options: SearchOptions,
@@ -962,7 +986,8 @@ impl<'a> MetadataCollection<'a> {
 
     pub fn by_external_id(&self, source: SourceName, source_id: &str) -> Result<StoredMedia> {
         let media = if let Some(kind) = self.options.media_kind {
-            self.db.get_by_external_id_and_kind(source, kind, source_id)?
+            self.db
+                .get_by_external_id_and_kind(source, kind, source_id)?
         } else {
             self.db.get_by_external_id(source, source_id)?
         };
@@ -996,8 +1021,8 @@ impl<'a> MetadataCollection<'a> {
 }
 
 fn upsert_media_in_tx(tx: &Transaction<'_>, media: &CanonicalMedia) -> Result<i64> {
-        let existing_media_id = resolve_media_id(tx, media.media_kind, &media.external_ids)?;
-        ensure_no_conflicts(tx, media.media_kind, existing_media_id, &media.external_ids)?;
+    let existing_media_id = resolve_media_id(tx, media.media_kind, &media.external_ids)?;
+    ensure_no_conflicts(tx, media.media_kind, existing_media_id, &media.external_ids)?;
     let existing = existing_media_id
         .map(|media_id| load_stored_media_in_tx(tx, media_id))
         .transpose()?;
@@ -1309,7 +1334,8 @@ fn load_stored_media_in_tx(tx: &Transaction<'_>, media_id: i64) -> Result<Stored
         .ok_or(Error::NotFound)?;
 
     let aliases = {
-        let mut stmt = tx.prepare("SELECT alias FROM media_alias WHERE media_id = ?1 ORDER BY alias")?;
+        let mut stmt =
+            tx.prepare("SELECT alias FROM media_alias WHERE media_id = ?1 ORDER BY alias")?;
         let rows = stmt.query_map(params![media_id], |row| row.get::<_, String>(0))?;
         rows.collect::<std::result::Result<Vec<_>, _>>()?
     };
@@ -1550,7 +1576,9 @@ fn merge_media(existing: Option<&StoredMedia>, incoming: &CanonicalMedia) -> Can
     );
 
     CanonicalMedia {
-        media_kind: existing.map(|item| item.media_kind).unwrap_or(incoming.media_kind),
+        media_kind: existing
+            .map(|item| item.media_kind)
+            .unwrap_or(incoming.media_kind),
         title_display,
         title_romaji,
         title_english,
@@ -1568,10 +1596,19 @@ fn merge_media(existing: Option<&StoredMedia>, incoming: &CanonicalMedia) -> Can
         banner_image,
         provider_rating,
         nsfw,
-        aliases: merge_string_lists(existing.map(|item| item.aliases.as_slice()), &incoming.aliases),
-        genres: merge_string_lists(existing.map(|item| item.genres.as_slice()), &incoming.genres),
+        aliases: merge_string_lists(
+            existing.map(|item| item.aliases.as_slice()),
+            &incoming.aliases,
+        ),
+        genres: merge_string_lists(
+            existing.map(|item| item.genres.as_slice()),
+            &incoming.genres,
+        ),
         tags: merge_string_lists(existing.map(|item| item.tags.as_slice()), &incoming.tags),
-        external_ids: merge_external_ids(existing.map(|item| item.external_ids.as_slice()), &incoming.external_ids),
+        external_ids: merge_external_ids(
+            existing.map(|item| item.external_ids.as_slice()),
+            &incoming.external_ids,
+        ),
         source_payloads: merge_source_payloads(
             existing.map(|item| item.source_payloads.as_slice()),
             &incoming.source_payloads,
@@ -1880,12 +1917,18 @@ fn make_provenance(
 fn merge_string_lists(existing: Option<&[String]>, incoming: &[String]) -> Vec<String> {
     let mut values = Vec::new();
     for value in existing.into_iter().flatten() {
-        if !values.iter().any(|item: &String| item.eq_ignore_ascii_case(value)) {
+        if !values
+            .iter()
+            .any(|item: &String| item.eq_ignore_ascii_case(value))
+        {
             values.push(value.clone());
         }
     }
     for value in incoming {
-        if !values.iter().any(|item: &String| item.eq_ignore_ascii_case(value)) {
+        if !values
+            .iter()
+            .any(|item: &String| item.eq_ignore_ascii_case(value))
+        {
             values.push(value.clone());
         }
     }
@@ -1895,18 +1938,16 @@ fn merge_string_lists(existing: Option<&[String]>, incoming: &[String]) -> Vec<S
 fn merge_external_ids(existing: Option<&[ExternalId]>, incoming: &[ExternalId]) -> Vec<ExternalId> {
     let mut values = Vec::new();
     for item in existing.into_iter().flatten() {
-        if !values
-            .iter()
-            .any(|value: &ExternalId| value.source == item.source && value.source_id == item.source_id)
-        {
+        if !values.iter().any(|value: &ExternalId| {
+            value.source == item.source && value.source_id == item.source_id
+        }) {
             values.push(item.clone());
         }
     }
     for item in incoming {
-        if !values
-            .iter()
-            .any(|value: &ExternalId| value.source == item.source && value.source_id == item.source_id)
-        {
+        if !values.iter().any(|value: &ExternalId| {
+            value.source == item.source && value.source_id == item.source_id
+        }) {
             values.push(item.clone());
         }
     }
@@ -2049,15 +2090,18 @@ mod tests {
             aliases: vec!["Naoki Urasawa's Monster".into()],
             genres: vec!["Mystery".into(), "Thriller".into()],
             tags: vec!["Psychological".into()],
-            external_ids: vec![ExternalId {
-                source: SourceName::AniList,
-                source_id: "19".into(),
-                url: Some("https://anilist.co/anime/19".into()),
-            }, ExternalId {
-                source: SourceName::MyAnimeList,
-                source_id: "19".into(),
-                url: Some("https://myanimelist.net/anime/19".into()),
-            }],
+            external_ids: vec![
+                ExternalId {
+                    source: SourceName::AniList,
+                    source_id: "19".into(),
+                    url: Some("https://anilist.co/anime/19".into()),
+                },
+                ExternalId {
+                    source: SourceName::MyAnimeList,
+                    source_id: "19".into(),
+                    url: Some("https://myanimelist.net/anime/19".into()),
+                },
+            ],
             source_payloads: vec![SourcePayload {
                 source: SourceName::AniList,
                 source_id: "19".into(),
@@ -2164,14 +2208,18 @@ mod tests {
             .expect("lookup merged");
 
         assert_eq!(loaded.id, first_id);
-        assert!(loaded
-            .external_ids
-            .iter()
-            .any(|id| id.source == SourceName::AniList));
-        assert!(loaded
-            .external_ids
-            .iter()
-            .any(|id| id.source == SourceName::Jikan));
+        assert!(
+            loaded
+                .external_ids
+                .iter()
+                .any(|id| id.source == SourceName::AniList)
+        );
+        assert!(
+            loaded
+                .external_ids
+                .iter()
+                .any(|id| id.source == SourceName::Jikan)
+        );
         assert_eq!(
             loaded.synopsis.as_deref(),
             jikan_variant().synopsis.as_deref()
@@ -2180,13 +2228,17 @@ mod tests {
             loaded.cover_image.as_deref(),
             jikan_variant().cover_image.as_deref()
         );
-        assert!(loaded
-            .field_provenance
-            .iter()
-            .any(|item| item.field_name == "synopsis" && item.source == SourceName::Jikan));
-        assert!(loaded
-            .field_provenance
-            .iter()
-            .any(|item| item.field_name == "cover_image" && item.source == SourceName::Jikan));
+        assert!(
+            loaded
+                .field_provenance
+                .iter()
+                .any(|item| item.field_name == "synopsis" && item.source == SourceName::Jikan)
+        );
+        assert!(
+            loaded
+                .field_provenance
+                .iter()
+                .any(|item| item.field_name == "cover_image" && item.source == SourceName::Jikan)
+        );
     }
 }

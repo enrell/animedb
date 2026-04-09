@@ -355,7 +355,9 @@ fn map_anilist_media(item: AniListMedia, media_kind: MediaKind) -> Result<Canoni
                 .or(cover.medium.clone())
         }),
         banner_image: item.banner_image.clone(),
-        provider_rating: item.average_score.map(|value| (value / 100.0).clamp(0.0, 1.0)),
+        provider_rating: item
+            .average_score
+            .map(|value| (value / 100.0).clamp(0.0, 1.0)),
         nsfw: item.is_adult.unwrap_or(false),
         aliases: item.synonyms.clone(),
         genres: item.genres.clone(),
@@ -591,7 +593,11 @@ impl RemoteProvider for KitsuProvider {
             return Ok(None);
         };
 
-        Ok(Some(map_kitsu_media(&item, &response.included, media_kind)?))
+        Ok(Some(map_kitsu_media(
+            &item,
+            &response.included,
+            media_kind,
+        )?))
     }
 }
 
@@ -642,8 +648,16 @@ fn map_jikan_media(item: JikanMedia, media_kind: MediaKind) -> Result<CanonicalM
         chapters: item.chapters,
         volumes: item.volumes,
         country_of_origin: None,
-        cover_image: item.images.jpg.large_image_url.clone().or(item.images.jpg.image_url.clone()),
-        banner_image: item.trailer.as_ref().and_then(|trailer| trailer.images.maximum_image_url.clone()),
+        cover_image: item
+            .images
+            .jpg
+            .large_image_url
+            .clone()
+            .or(item.images.jpg.image_url.clone()),
+        banner_image: item
+            .trailer
+            .as_ref()
+            .and_then(|trailer| trailer.images.maximum_image_url.clone()),
         provider_rating: item.score.map(|value| (value / 10.0).clamp(0.0, 1.0)),
         nsfw: jikan_is_nsfw(item.rating.as_deref()),
         aliases,
@@ -659,7 +673,10 @@ fn map_jikan_media(item: JikanMedia, media_kind: MediaKind) -> Result<CanonicalM
             source: SourceName::Jikan,
             source_id: item.mal_id.to_string(),
             url: item.url.clone(),
-            remote_updated_at: item.updated_at.as_ref().and_then(|value| value.from.clone()),
+            remote_updated_at: item
+                .updated_at
+                .as_ref()
+                .and_then(|value| value.from.clone()),
             raw_json: Some(raw_json),
         }],
         field_provenance: Vec::new(),
@@ -697,7 +714,11 @@ fn map_kitsu_media(
     let mut external_ids = vec![ExternalId {
         source: SourceName::Kitsu,
         source_id: item.id.clone(),
-        url: Some(format!("https://kitsu.io/{}/{}", kitsu_kind_path(media_kind), item.id)),
+        url: Some(format!(
+            "https://kitsu.io/{}/{}",
+            kitsu_kind_path(media_kind),
+            item.id
+        )),
     }];
     for mapping in mappings {
         if let Some(external_id) = mapping.external_id {
@@ -725,15 +746,15 @@ fn map_kitsu_media(
         format: attributes.subtype.clone(),
         status: attributes.status.clone(),
         season: None,
-        season_year: attributes
-            .start_date
-            .as_deref()
-            .and_then(parse_kitsu_year),
+        season_year: attributes.start_date.as_deref().and_then(parse_kitsu_year),
         episodes: attributes.episode_count,
         chapters: attributes.chapter_count,
         volumes: attributes.volume_count,
         country_of_origin: None,
-        cover_image: attributes.poster_image.as_ref().and_then(prefer_kitsu_image),
+        cover_image: attributes
+            .poster_image
+            .as_ref()
+            .and_then(prefer_kitsu_image),
         banner_image: attributes.cover_image.as_ref().and_then(prefer_kitsu_image),
         provider_rating: attributes
             .average_rating
@@ -749,7 +770,11 @@ fn map_kitsu_media(
         source_payloads: vec![SourcePayload {
             source: SourceName::Kitsu,
             source_id: item.id.clone(),
-            url: Some(format!("https://kitsu.io/{}/{}", kitsu_kind_path(media_kind), item.id)),
+            url: Some(format!(
+                "https://kitsu.io/{}/{}",
+                kitsu_kind_path(media_kind),
+                item.id
+            )),
             remote_updated_at: attributes.updated_at.clone(),
             raw_json: Some(raw_json),
         }],

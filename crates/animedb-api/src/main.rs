@@ -2,6 +2,11 @@ use animedb_api::{build_router, build_schema};
 use std::env;
 use std::net::SocketAddr;
 
+/// Runs the GraphQL API process.
+///
+/// Environment variables:
+/// - `ANIMEDB_DATABASE_PATH`, default `/data/animedb.sqlite`
+/// - `ANIMEDB_LISTEN_ADDR`, default `0.0.0.0:8080`
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_path =

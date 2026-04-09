@@ -74,12 +74,18 @@ fn main() -> Result<()> {
     let remote_anilist = RemoteApi::anilist();
     let remote_jikan = AnimeDb::remote(RemoteSource::Jikan);
     let remote_kitsu = AnimeDb::remote(RemoteSource::Kitsu);
-    let anilist_results =
-        remote_anilist.search("monster", SearchOptions::default().with_media_kind(MediaKind::Anime))?;
-    let jikan_results =
-        remote_jikan.search("monster", SearchOptions::default().with_media_kind(MediaKind::Anime))?;
-    let kitsu_results =
-        remote_kitsu.search("monster", SearchOptions::default().with_media_kind(MediaKind::Anime))?;
+    let anilist_results = remote_anilist.search(
+        "monster",
+        SearchOptions::default().with_media_kind(MediaKind::Anime),
+    )?;
+    let jikan_results = remote_jikan.search(
+        "monster",
+        SearchOptions::default().with_media_kind(MediaKind::Anime),
+    )?;
+    let kitsu_results = remote_kitsu.search(
+        "monster",
+        SearchOptions::default().with_media_kind(MediaKind::Anime),
+    )?;
 
     if anilist_results.is_empty() || jikan_results.is_empty() || kitsu_results.is_empty() {
         return Err(animedb::Error::Validation(

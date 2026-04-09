@@ -12,6 +12,8 @@ It has two consumption modes that can be used separately or together:
 
 The project also ships a Rust GraphQL API on top of the same crate.
 
+See [REFERENCE.md](/home/kokoro/btw/projects/animedb/REFERENCE.md) for the current library and API reference.
+
 ## Workspace
 
 - `crates/animedb` - library crate with SQLite schema management, sync and query APIs

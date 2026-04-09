@@ -1,3 +1,11 @@
+//! GraphQL service layer for the `animedb` catalog crate.
+//!
+//! This crate exposes:
+//!
+//! - a reusable GraphQL schema builder via [`build_schema`]
+//! - an Axum router via [`build_router`]
+//! - a binary entry point in `main.rs` for running the service directly
+
 use animedb::{
     AniListProvider, AnimeDb, CanonicalMedia, FieldProvenance, JikanProvider, KitsuProvider,
     MediaKind, PersistedSyncState, RemoteCatalog, SearchHit, SearchOptions, SourceName,
@@ -17,11 +25,13 @@ use std::path::PathBuf;
 
 pub type AnimeDbSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
+/// Shared application state injected into the GraphQL schema.
 #[derive(Clone)]
 pub struct AppState {
     pub database_path: PathBuf,
 }
 
+/// Builds the GraphQL schema backed by one SQLite database path.
 pub fn build_schema(database_path: impl Into<PathBuf>) -> AnimeDbSchema {
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(AppState {
@@ -30,6 +40,7 @@ pub fn build_schema(database_path: impl Into<PathBuf>) -> AnimeDbSchema {
         .finish()
 }
 
+/// Builds the Axum router that serves Playground, GraphQL, and health endpoints.
 pub fn build_router(schema: AnimeDbSchema) -> Router {
     Router::new()
         .route("/", get(playground).post(graphql_handler))
@@ -127,11 +138,9 @@ impl QueryRoot {
         options: Option<SearchInput>,
     ) -> GraphQLResult<Vec<MediaObject>> {
         let options = options.unwrap_or_default().into_model();
-        let media = tokio::task::spawn_blocking(move || {
-            search_remote(source, &query, options)
-        })
-        .await
-        .map_err(join_error)??;
+        let media = tokio::task::spawn_blocking(move || search_remote(source, &query, options))
+            .await
+            .map_err(join_error)??;
 
         Ok(media)
     }
@@ -142,11 +151,10 @@ impl QueryRoot {
         source_id: String,
         media_kind: MediaKindObject,
     ) -> GraphQLResult<Option<MediaObject>> {
-        let media = tokio::task::spawn_blocking(move || {
-            get_remote_media(source, &source_id, media_kind)
-        })
-        .await
-        .map_err(join_error)??;
+        let media =
+            tokio::task::spawn_blocking(move || get_remote_media(source, &source_id, media_kind))
+                .await
+                .map_err(join_error)??;
 
         Ok(media)
     }
@@ -201,12 +209,15 @@ impl MutationRoot {
                 }
 
                 let outcome = match source {
-                    SourceNameObject::Anilist => db.sync_from(&AniListProvider::default(), request)?,
+                    SourceNameObject::Anilist => {
+                        db.sync_from(&AniListProvider::default(), request)?
+                    }
                     SourceNameObject::Jikan => db.sync_from(&JikanProvider::default(), request)?,
                     SourceNameObject::Kitsu => db.sync_from(&KitsuProvider::default(), request)?,
                     SourceNameObject::Myanimelist => {
                         return Err(animedb::Error::Validation(
-                            "sync direto para MyAnimeList não existe; use AniList, Jikan ou Kitsu".into(),
+                            "sync direto para MyAnimeList não existe; use AniList, Jikan ou Kitsu"
+                                .into(),
                         ));
                     }
                 };
@@ -705,24 +716,30 @@ fn sync_with_max_pages(db: &mut AnimeDb, max_pages: usize) -> animedb::Result<Sy
     let mut outcomes = Vec::new();
 
     for media_kind in [MediaKind::Anime, MediaKind::Manga] {
-        outcomes.push(db.sync_from(
-            &anilist,
-            SyncRequest::new(SourceName::AniList)
-                .with_media_kind(media_kind)
-                .with_max_pages(max_pages),
-        )?);
-        outcomes.push(db.sync_from(
-            &jikan,
-            SyncRequest::new(SourceName::Jikan)
-                .with_media_kind(media_kind)
-                .with_max_pages(max_pages),
-        )?);
-        outcomes.push(db.sync_from(
-            &kitsu,
-            SyncRequest::new(SourceName::Kitsu)
-                .with_media_kind(media_kind)
-                .with_max_pages(max_pages),
-        )?);
+        outcomes.push(
+            db.sync_from(
+                &anilist,
+                SyncRequest::new(SourceName::AniList)
+                    .with_media_kind(media_kind)
+                    .with_max_pages(max_pages),
+            )?,
+        );
+        outcomes.push(
+            db.sync_from(
+                &jikan,
+                SyncRequest::new(SourceName::Jikan)
+                    .with_media_kind(media_kind)
+                    .with_max_pages(max_pages),
+            )?,
+        );
+        outcomes.push(
+            db.sync_from(
+                &kitsu,
+                SyncRequest::new(SourceName::Kitsu)
+                    .with_media_kind(media_kind)
+                    .with_max_pages(max_pages),
+            )?,
+        );
     }
 
     let total_upserted_records = outcomes.iter().map(|item| item.upserted_records).sum();
