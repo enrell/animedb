@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Local-first anime and manga metadata catalog for Rust media servers"
+readme = "../../README.md"
 
 [dependencies]
 reqwest.workspace = true

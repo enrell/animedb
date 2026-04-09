@@ -6,9 +6,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "GraphQL API for the animedb Rust metadata catalog"
+readme = "../../README.md"
 
 [dependencies]
-animedb = { path = "../animedb" }
+animedb = { version = "0.1.0", path = "../animedb" }
 async-graphql.workspace = true
 async-graphql-axum.workspace = true
 axum.workspace = true
