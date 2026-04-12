@@ -8,10 +8,21 @@ repository.workspace = true
 description = "Local-first anime and manga metadata catalog for Rust media servers"
 readme = "../../README.md"
 
+[features]
+default = ["local-db", "remote"]
+# Enables local SQLite database storage (requires rusqlite)
+local-db = ["dep:rusqlite"]
+# Enables remote provider clients and data normalization
+remote = []
+
 [dependencies]
 reqwest.workspace = true
-rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 flate2 = "1"
+rusqlite = { version = "0.37", optional = true, features = ["bundled", "serde_json"] }
+# NOTE: When using animedb with only `remote` feature (no `local-db`), rusqlite
+# is not pulled in. Psyche and other crates can depend on animedb with
+# `default-features = false, features = ["remote"]` to avoid the SQLite binding
+# conflict with sqlx-based projects.
