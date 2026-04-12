@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[cfg(feature = "local-db")]
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("json error: {0}")]

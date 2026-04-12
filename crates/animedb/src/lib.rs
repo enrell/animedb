@@ -25,6 +25,7 @@
 
 #[cfg(feature = "local-db")]
 mod catalog;
+#[cfg(feature = "local-db")]
 mod db;
 mod error;
 mod merge;
