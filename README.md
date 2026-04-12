@@ -2,22 +2,58 @@
 
 `animedb` is a Rust-first metadata project for local media servers.
 
-> Advisory
-> `animedb` stores and normalizes public metadata, but it does not override provider Terms of Service, attribution requirements, authentication rules, rate limits or mature-content restrictions. Before enabling bulk sync for a source, verify that your intended usage is allowed by that source and configure conservative sync budgets.
+> **Advisory**: `animedb` stores and normalizes public metadata, but it does not override
+> provider Terms of Service, attribution requirements, authentication rules, rate limits or
+> mature-content restrictions. Before enabling bulk sync for a source, verify that your
+> intended usage is allowed by that source and configure conservative sync budgets.
 
 It has two consumption modes that can be used separately or together:
 
-- local-first: manage a local SQLite catalog with schema, downloads, sync, FTS5 search and JSON source payloads
-- remote-first: query normalized metadata from remote providers without forcing client applications to manage persistence or provider-specific normalization
+- **local-first**: manage a local SQLite catalog with schema, downloads, sync, FTS5 search and
+  JSON source payloads
+- **remote-first**: query normalized metadata from remote providers without forcing client
+  applications to manage persistence or provider-specific normalization
 
 The project also ships a Rust GraphQL API on top of the same crate.
 
-See [REFERENCE.md](/home/kokoro/btw/projects/animedb/REFERENCE.md) for the current library and API reference.
+See [REFERENCE.md](/home/kokoro/btw/projects/animedb/REFERENCE.md) for the current library
+and API reference.
+
+## Supported providers
+
+| Provider | Media kinds | Data source | Licensed under |
+|----------|-------------|-------------|---------------|
+| AniList | Anime, Manga | GraphQL API | [AniList Terms](https://anilist.co/terms) |
+| Jikan (MyAnimeList) | Anime, Manga | REST API | [Jikan MIT](https://gitlab.com/moritz-k/jikan/-/blob/master/LICENSE) |
+| Kitsu | Anime, Manga | REST API | [Kitsu API Policy](https://kitsu.io/terms) |
+| TVmaze | Shows | REST API (`api.tvmaze.com`) | CC BY-SA 4.0 |
+| IMDb | Movies, Shows | Official TSV datasets (`datasets.imdb.com`) | [IMDb Conditions](https://www.imdb.com/conditions) |
 
 ## Workspace
 
-- `crates/animedb` - library crate with SQLite schema management, sync and query APIs
-- `crates/animedb-api` - GraphQL API binary built on top of `animedb`
+- `crates/animedb` — library crate with SQLite schema management, sync and query APIs
+- `crates/animedb-api` — GraphQL API binary built on top of `animedb`
+
+## Feature flags
+
+```toml
+# Full featured (local SQLite + all providers) — default
+animedb = "0.2"
+
+# Remote-only, no SQLite dependency (safe for sqlx-based projects)
+animedb = { version = "0.2", default-features = false, features = ["remote"] }
+```
+
+- `local-db` (default): local SQLite storage, sync state persistence, and the [`AnimeDb`] type.
+  This feature pulls in `rusqlite` with a bundled SQLite.
+- `remote` (default): remote provider clients and the normalized data model. Zero native
+  dependencies.
+
+**Why feature gates?** `local-db` requires `rusqlite` (bundled SQLite). Many Rust projects
+already use `sqlx` with its own SQLite linkage, and Cargo rejects putting both in the same
+dependency graph. If your project uses `sqlx`, depend on animedb with only `features = ["remote"]`
+to get all provider clients, normalization types, and sync data structures without any SQLite
+conflict.
 
 ## Current Rust surface
 
@@ -35,8 +71,12 @@ println!("synced {} records", updated.total_upserted_records);
 let monster = db.anime_metadata().by_external_id(SourceName::AniList, "19")?;
 println!("{}", monster.name());
 
+let show = db.show_metadata().search("breaking bad")?;
+let show = db.get_by_external_id(SourceName::Imdb, "tt0903747")?;
+
 let movies = db.movie_metadata().search("spirited away")?;
 println!("movie hits: {}", movies.len());
+
 # Ok::<(), animedb::Error>(())
 ```
 
@@ -56,22 +96,35 @@ Or choose the provider dynamically:
 ```rust
 use animedb::{AnimeDb, RemoteSource};
 
-let remote = AnimeDb::remote(RemoteSource::Jikan);
-let results = remote.movie_metadata().search("paprika")?;
+let remote = AnimeDb::remote(RemoteSource::Tvmaze);
+let results = remote.show_metadata().search("breaking bad")?;
 # Ok::<(), animedb::Error>(())
 ```
 
-## Database design
+## Media kinds
+
+All providers map to one of four supported kinds:
+
+```rust
+pub enum MediaKind {
+    Anime,  // Japanese animation
+    Manga,  // Japanese comics
+    Show,   // TV series (from TVmaze / IMDb)
+    Movie,  // Films (from IMDb)
+}
+```
+
+## SQLite schema
 
 The SQLite catalog is created and migrated by the crate itself. The current schema includes:
 
-- `media` - canonical normalized records
-- `media_alias` - normalized aliases and synonyms
-- `media_external_id` - source-specific identifiers
-- `source_record` - raw per-source JSON payloads and source update metadata
-- `field_provenance` - winner-per-field audit trail for canonical merge decisions
-- `sync_state` - persisted sync checkpoints/cursors
-- `media_fts` - `FTS5` index for title, alias and synopsis search
+- `media` — canonical normalized records
+- `media_alias` — normalized aliases and synonyms
+- `media_external_id` — source-specific identifiers
+- `source_record` — raw per-source JSON payloads and source update metadata
+- `field_provenance` — winner-per-field audit trail for canonical merge decisions
+- `sync_state` — persisted sync checkpoints/cursors
+- `media_fts` — `FTS5` index for title, alias and synopsis search
 
 The connection is configured with:
 
@@ -83,9 +136,7 @@ The connection is configured with:
 
 ## GraphQL API
 
-The GraphQL API is provided by `animedb-api`.
-
-Run it locally:
+The GraphQL API is provided by `animedb-api`. Run it locally:
 
 ```bash
 cargo run -p animedb-api
@@ -93,14 +144,22 @@ cargo run -p animedb-api
 
 Environment variables:
 
-- `ANIMEDB_DATABASE_PATH` - SQLite file path, default `/data/animedb.sqlite`
-- `ANIMEDB_LISTEN_ADDR` - bind address, default `0.0.0.0:8080`
+- `ANIMEDB_DATABASE_PATH` — SQLite file path, default `/data/animedb.sqlite`
+- `ANIMEDB_LISTEN_ADDR` — bind address, default `0.0.0.0:8080`
 
-Endpoints:
+Query example (search shows and movies):
 
-- `GET /` - GraphQL Playground
-- `POST /graphql` - GraphQL endpoint
-- `GET /healthz` - health check
+```graphql
+{
+  search(query: "breaking bad", options: { limit: 5, mediaKind: SHOW }) {
+    mediaId
+    titleDisplay
+    mediaKind
+    genres
+    externalIds { source sourceId }
+  }
+}
+```
 
 ## Docker
 
@@ -113,12 +172,11 @@ docker run --rm -p 8080:8080 -v $(pwd)/data:/data animedb
 
 ## Make targets
 
-The repository now includes a `Makefile` for the common workflows:
+The repository includes a `Makefile` for common workflows:
 
-- `make build` - compile the workspace
-- `make test` - run the Rust test suite
-- `make crate-real` - run the real-provider crate example against AniList, Jikan and Kitsu
-- `make test-real` - run the end-to-end real pipeline: crate example + Docker API + GraphQL checks
-- `make docker-build` - build the API image
-- `make docker-run` - run the API image locally
-- `make debug-api` - run the GraphQL API directly with `cargo run`
+- `make build` — compile the workspace
+- `make test` — run the Rust test suite
+- `make test-e2e` — run the end-to-end integration test (`scripts/e2e_test.sh`)
+- `make docker-build` — build the API image
+- `make docker-run` — run the API image locally
+- `make debug-api` — run the GraphQL API directly with `cargo run`
