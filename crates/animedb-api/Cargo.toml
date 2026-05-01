@@ -9,7 +9,7 @@ description = "GraphQL API for the animedb Rust metadata catalog"
 readme = "../../README.md"
 
 [dependencies]
-animedb = { version = "0.2.1", path = "../animedb", features = ["local-db"] }
+animedb = { version = "0.2.2", path = "../animedb", features = ["local-db"] }
 async-graphql.workspace = true
 async-graphql-axum.workspace = true
 axum.workspace = true
