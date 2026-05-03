@@ -340,6 +340,62 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_characters_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuCharacterAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/characters", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "name".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCharactersCollectionResponse>()?;
+
+        let characters = response
+            .data
+            .iter()
+            .map(|c| c.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((characters, next_cursor))
+    }
+
+    pub fn get_character(
+        &self,
+        character_id: &str,
+    ) -> Result<Option<KitsuCharacterAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/characters/{character_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuCharacterResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2246,6 +2302,45 @@ struct KitsuCategoryAttributes {
     is_active: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuCharacterResponse {
+    data: Option<KitsuCharacterResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCharactersCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuCharacterResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCharacterResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuCharacterAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCharacterAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(rename = "imageUrl")]
+    image_url: Option<String>,
+    #[serde(rename = "canonicalName")]
+    canonical_name: Option<String>,
+    #[serde(rename = "malId")]
+    mal_id: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -3079,5 +3174,73 @@ mod tests {
         assert!(attrs.total_media_count.is_none());
         assert!(attrs.slug.is_none());
         assert!(attrs.is_active.is_none());
+    }
+
+    #[test]
+    fn kitsu_character_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "123",
+                "type": "characters",
+                "attributes": {
+                    "name": "Guts",
+                    "description": "The protagonist of Berserk",
+                    "imageUrl": "https://kitsu.io/characters/123.jpg",
+                    "canonicalName": "Guts",
+                    "malId": 456
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuCharacterResponse = serde_json::from_str(json).expect("parse character response");
+        let character = response.data.expect("data present");
+        assert_eq!(character.id, "123");
+        let attrs = character.attributes;
+        assert_eq!(attrs.name.as_deref(), Some("Guts"));
+        assert_eq!(attrs.image_url.as_deref(), Some("https://kitsu.io/characters/123.jpg"));
+        assert_eq!(attrs.mal_id, Some(456));
+    }
+
+    #[test]
+    fn kitsu_character_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuCharacterResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_characters_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "characters", "attributes": {"name": "Naruto"}},
+                {"id": "2", "type": "characters", "attributes": {"name": "Sasuke"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/characters?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuCharactersCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_character_attributes_optional_fields() {
+        let json = r#"{
+            "name": null,
+            "description": null,
+            "imageUrl": null,
+            "canonicalName": null,
+            "malId": null
+        }"#;
+
+        let attrs: KitsuCharacterAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.name.is_none());
+        assert!(attrs.description.is_none());
+        assert!(attrs.image_url.is_none());
+        assert!(attrs.mal_id.is_none());
     }
 }
