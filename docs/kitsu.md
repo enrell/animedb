@@ -458,8 +458,9 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/media-reactions` | ❌ Not Implemented |
-| Fetch Resource | GET | `/media-reactions/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/media-reactions` | ✅ Full |
+| Fetch Resource | GET | `/media-reactions/{id}` | ✅ Full |
+| Fetch by Media | GET | `/media-reactions?filter[media_id]={id}` | ✅ Full |
 | Create Resource | POST | `/media-reactions` | ❌ Not Implemented |
 | Update Resource | PATCH | `/media-reactions/{id}` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/media-reactions/{id}` | ❌ Not Implemented |
@@ -468,8 +469,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/media-reaction-votes` | ❌ Not Implemented |
-| Fetch Resource | GET | `/media-reaction-votes/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/media-reaction-votes` | ✅ Full |
+| Fetch Resource | GET | `/media-reaction-votes/{id}` | ✅ Full |
 | Create Resource | POST | `/media-reaction-votes` | ❌ Not Implemented |
 | Update Resource | PATCH | `/media-reaction-votes/{id}` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/media-reaction-votes/{id}` | ❌ Not Implemented |

@@ -996,6 +996,293 @@ impl KitsuProvider {
 
         Ok(Some(item))
     }
+
+    pub fn fetch_favorites_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuFavoriteAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/favorites", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuFavoritesCollectionResponse>()?;
+
+        let favorites = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((favorites, next_cursor))
+    }
+
+    pub fn get_favorite(&self, id: &str) -> Result<Option<KitsuFavoriteAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/favorites/{id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuFavoriteResponse>()?;
+
+        let item = match response.data {
+            Some(data) => data.attributes,
+            None => return Ok(None),
+        };
+
+        Ok(Some(item))
+    }
+
+    pub fn fetch_user_favorites(
+        &self,
+        user_id: i32,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuFavoriteAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/favorites", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("filter[user_id]", user_id.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuFavoritesCollectionResponse>()?;
+
+        let favorites = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((favorites, next_cursor))
+    }
+
+    pub fn fetch_posts_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuPostAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/posts", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "-likes_count".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuPostsCollectionResponse>()?;
+
+        let posts = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((posts, next_cursor))
+    }
+
+    pub fn get_post(&self, id: &str) -> Result<Option<KitsuPostAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/posts/{id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuPostResponse>()?;
+
+        let item = match response.data {
+            Some(data) => data.attributes,
+            None => return Ok(None),
+        };
+
+        Ok(Some(item))
+    }
+
+    pub fn fetch_post_likes_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuPostLikeAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/post-likes", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuPostLikesCollectionResponse>()?;
+
+        let likes = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((likes, next_cursor))
+    }
+
+    pub fn get_post_like(&self, id: &str) -> Result<Option<KitsuPostLikeAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/post-likes/{id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuPostLikeResponse>()?;
+
+        let item = match response.data {
+            Some(data) => data.attributes,
+            None => return Ok(None),
+        };
+
+        Ok(Some(item))
+    }
+
+    pub fn fetch_comments_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuCommentAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/comments", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "-likes_count".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCommentsCollectionResponse>()?;
+
+        let comments = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((comments, next_cursor))
+    }
+
+    pub fn get_comment(&self, id: &str) -> Result<Option<KitsuCommentAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/comments/{id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCommentResponse>()?;
+
+        let item = match response.data {
+            Some(data) => data.attributes,
+            None => return Ok(None),
+        };
+
+        Ok(Some(item))
+    }
+
+    pub fn fetch_comment_likes_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuCommentLikeAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/comment-likes", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCommentLikesCollectionResponse>()?;
+
+        let likes = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((likes, next_cursor))
+    }
+
+    pub fn get_comment_like(&self, id: &str) -> Result<Option<KitsuCommentLikeAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/comment-likes/{id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCommentLikeResponse>()?;
+
+        let item = match response.data {
+            Some(data) => data.attributes,
+            None => return Ok(None),
+        };
+
+        Ok(Some(item))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -3146,6 +3433,203 @@ struct KitsuStreamingLinkAttributes {
     media_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuFavoriteAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    #[serde(rename = "mediaId")]
+    media_id: Option<i32>,
+    #[serde(rename = "mediaType")]
+    media_type: Option<String>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuFavoriteResponse {
+    data: Option<KitsuFavoriteResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuFavoritesCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuFavoriteResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuFavoriteResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuFavoriteAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuPostAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    body: Option<String>,
+    #[serde(rename = "likesCount")]
+    likes_count: Option<i32>,
+    #[serde(rename = "repliesCount")]
+    replies_count: Option<i32>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuPostResponse {
+    data: Option<KitsuPostResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuPostsCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuPostResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuPostResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuPostAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuPostLikeAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    #[serde(rename = "postId")]
+    post_id: Option<i32>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuPostLikeResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuPostLikeAttributes,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuPostLikeResponse {
+    data: Option<KitsuPostLikeResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuPostLikesCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuPostLikeResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCommentAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    body: Option<String>,
+    #[serde(rename = "likesCount")]
+    likes_count: Option<i32>,
+    #[serde(rename = "repliesCount")]
+    replies_count: Option<i32>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+    #[serde(rename = "postId")]
+    post_id: Option<i32>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCommentResponse {
+    data: Option<KitsuCommentResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCommentsCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuCommentResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCommentResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuCommentAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCommentLikeAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    #[serde(rename = "commentId")]
+    comment_id: Option<i32>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCommentLikeResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuCommentLikeAttributes,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCommentLikeResponse {
+    data: Option<KitsuCommentLikeResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCommentLikesCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuCommentLikeResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
 #[derive(Debug, Deserialize)]
 struct KitsuUserResponse {
     data: Option<KitsuUserResource>,
@@ -4890,6 +5374,296 @@ mod tests {
         }"#;
 
         let response: KitsuMediaReactionVotesCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_favorite_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "999",
+                "type": "favorites",
+                "attributes": {
+                    "updatedAt": "2024-01-20T15:00:00Z",
+                    "createdAt": "2024-01-20T15:00:00Z",
+                    "mediaId": 12345,
+                    "mediaType": "anime",
+                    "userId": 789
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuFavoriteResponse = serde_json::from_str(json).expect("parse favorite");
+        let favorite = response.data.expect("data present");
+        assert_eq!(favorite.id, "999");
+        let attrs = favorite.attributes;
+        assert_eq!(attrs.media_id, Some(12345));
+        assert_eq!(attrs.media_type.as_deref(), Some("anime"));
+    }
+
+    #[test]
+    fn kitsu_favorite_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuFavoriteResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_favorites_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "favorites", "attributes": {"mediaId": 1, "mediaType": "anime"}},
+                {"id": "2", "type": "favorites", "attributes": {"mediaId": 2, "mediaType": "manga"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/favorites?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuFavoritesCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_favorite_attributes_optional_fields() {
+        let json = r#"{
+            "updatedAt": null,
+            "createdAt": null,
+            "mediaId": null,
+            "mediaType": null,
+            "userId": null
+        }"#;
+
+        let attrs: KitsuFavoriteAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.media_id.is_none());
+        assert!(attrs.media_type.is_none());
+    }
+
+    #[test]
+    fn kitsu_post_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "777",
+                "type": "posts",
+                "attributes": {
+                    "updatedAt": "2024-01-21T10:00:00Z",
+                    "createdAt": "2024-01-21T10:00:00Z",
+                    "body": "Just finished watching this amazing anime!",
+                    "likesCount": 25,
+                    "repliesCount": 3,
+                    "userId": 456
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuPostResponse = serde_json::from_str(json).expect("parse post");
+        let post = response.data.expect("data present");
+        assert_eq!(post.id, "777");
+        let attrs = post.attributes;
+        assert_eq!(attrs.body.as_deref(), Some("Just finished watching this amazing anime!"));
+        assert_eq!(attrs.likes_count, Some(25));
+    }
+
+    #[test]
+    fn kitsu_post_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuPostResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_posts_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "posts", "attributes": {"body": "First post", "likesCount": 10}},
+                {"id": "2", "type": "posts", "attributes": {"body": "Second post", "likesCount": 5}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/posts?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuPostsCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_post_attributes_optional_fields() {
+        let json = r#"{
+            "updatedAt": null,
+            "createdAt": null,
+            "body": null,
+            "likesCount": null,
+            "repliesCount": null,
+            "userId": null
+        }"#;
+
+        let attrs: KitsuPostAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.body.is_none());
+        assert!(attrs.likes_count.is_none());
+    }
+
+    #[test]
+    fn kitsu_post_like_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "888",
+                "type": "postLikes",
+                "attributes": {
+                    "updatedAt": "2024-01-22T12:00:00Z",
+                    "createdAt": "2024-01-22T12:00:00Z",
+                    "postId": 777,
+                    "userId": 456
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuPostLikeResponse = serde_json::from_str(json).expect("parse post like");
+        let like = response.data.expect("data present");
+        assert_eq!(like.id, "888");
+        let attrs = like.attributes;
+        assert_eq!(attrs.post_id, Some(777));
+    }
+
+    #[test]
+    fn kitsu_post_like_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuPostLikeResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_post_likes_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "postLikes", "attributes": {"postId": 1}},
+                {"id": "2", "type": "postLikes", "attributes": {"postId": 2}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/post-likes?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuPostLikesCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_comment_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "555",
+                "type": "comments",
+                "attributes": {
+                    "updatedAt": "2024-01-23T09:00:00Z",
+                    "createdAt": "2024-01-23T09:00:00Z",
+                    "body": "Great review! I totally agree.",
+                    "likesCount": 8,
+                    "repliesCount": 2,
+                    "userId": 123,
+                    "postId": 777,
+                    "parentId": null
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuCommentResponse = serde_json::from_str(json).expect("parse comment");
+        let comment = response.data.expect("data present");
+        assert_eq!(comment.id, "555");
+        let attrs = comment.attributes;
+        assert_eq!(attrs.body.as_deref(), Some("Great review! I totally agree."));
+        assert_eq!(attrs.likes_count, Some(8));
+    }
+
+    #[test]
+    fn kitsu_comment_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuCommentResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_comments_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "comments", "attributes": {"body": "First comment"}},
+                {"id": "2", "type": "comments", "attributes": {"body": "Second comment"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/comments?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuCommentsCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_comment_attributes_optional_fields() {
+        let json = r#"{
+            "updatedAt": null,
+            "createdAt": null,
+            "body": null,
+            "likesCount": null,
+            "repliesCount": null,
+            "userId": null,
+            "postId": null,
+            "parentId": null
+        }"#;
+
+        let attrs: KitsuCommentAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.body.is_none());
+        assert!(attrs.post_id.is_none());
+        assert!(attrs.parent_id.is_none());
+    }
+
+    #[test]
+    fn kitsu_comment_like_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "666",
+                "type": "commentLikes",
+                "attributes": {
+                    "updatedAt": "2024-01-24T14:00:00Z",
+                    "createdAt": "2024-01-24T14:00:00Z",
+                    "commentId": 555,
+                    "userId": 123
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuCommentLikeResponse = serde_json::from_str(json).expect("parse comment like");
+        let like = response.data.expect("data present");
+        assert_eq!(like.id, "666");
+        let attrs = like.attributes;
+        assert_eq!(attrs.comment_id, Some(555));
+    }
+
+    #[test]
+    fn kitsu_comment_like_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuCommentLikeResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_comment_likes_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "commentLikes", "attributes": {"commentId": 1}},
+                {"id": "2", "type": "commentLikes", "attributes": {"commentId": 2}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/comment-likes?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuCommentLikesCollectionResponse = serde_json::from_str(json).expect("parse collection");
         assert_eq!(response.data.len(), 2);
         assert!(response.links.next.is_some());
     }
