@@ -47,8 +47,9 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 | GET | `/streamers/{id}` | ✅ Full |
 | GET | `/streaming-links` | ✅ Full |
 | GET | `/streaming-links/{id}` | ✅ Full |
-| GET | `/users` | ✅ Full |
-| GET | `/users/{id}` | ✅ Full |
+| GET | `/library-entries` | ✅ Full |
+| GET | `/library-entries/{id}` | ✅ Full |
+| GET | `/users/{id}/library-entries` | ✅ Full |
 
 ---
 
@@ -416,11 +417,12 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/library-entries` | ❌ Not Implemented |
-| Fetch Resource | GET | `/library-entries/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/library-entries` | ✅ Full |
+| Fetch Resource | GET | `/library-entries/{id}` | ✅ Full |
 | Create Resource | POST | `/library-entries` | ❌ Not Implemented |
 | Update Resource | PATCH | `/library-entries/{id}` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/library-entries/{id}` | ❌ Not Implemented |
+| Fetch User Library | GET | `/users/{user_id}/library-entries` | ✅ Full |
 
 ### Library Entry Logs [/library-entry-logs/{id}]
 

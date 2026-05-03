@@ -857,6 +857,145 @@ impl KitsuProvider {
 
         Ok((entries, next_cursor))
     }
+
+    pub fn fetch_media_reactions_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuMediaReactionAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/media-reactions", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "-likes_count".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuMediaReactionsCollectionResponse>()?;
+
+        let reactions = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((reactions, next_cursor))
+    }
+
+    pub fn get_media_reaction(&self, id: &str) -> Result<Option<KitsuMediaReactionAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/media-reactions/{id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuMediaReactionResponse>()?;
+
+        let item = match response.data {
+            Some(data) => data.attributes,
+            None => return Ok(None),
+        };
+
+        Ok(Some(item))
+    }
+
+    pub fn fetch_media_reactions_by_media(
+        &self,
+        media_id: i32,
+        media_type: &str,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuMediaReactionAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/media-reactions", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("filter[media_id]", media_id.to_string()),
+                ("filter[media_type]", media_type.to_string()),
+                ("sort", "-likes_count".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuMediaReactionsCollectionResponse>()?;
+
+        let reactions = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((reactions, next_cursor))
+    }
+
+    pub fn fetch_media_reaction_votes_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuMediaReactionVotesAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/media-reaction-votes", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuMediaReactionVotesCollectionResponse>()?;
+
+        let votes = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((votes, next_cursor))
+    }
+
+    pub fn get_media_reaction_vote(&self, id: &str) -> Result<Option<KitsuMediaReactionVotesAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/media-reaction-votes/{id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuMediaReactionVoteResponse>()?;
+
+        let item = match response.data {
+            Some(data) => data.attributes,
+            None => return Ok(None),
+        };
+
+        Ok(Some(item))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -3098,6 +3237,91 @@ struct KitsuLibraryEntryAttributes {
     user_id: Option<i32>,
 }
 
+// =====================================================
+// Kitsu Media Reactions
+// =====================================================
+
+#[derive(Debug, Deserialize)]
+struct KitsuMediaReactionResponse {
+    data: Option<KitsuMediaReactionResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuMediaReactionsCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuMediaReactionResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuMediaReactionResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuMediaReactionAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuMediaReactionAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    body: Option<String>,
+    #[serde(rename = "likesCount")]
+    likes_count: Option<i32>,
+    #[serde(rename = "repliesCount")]
+    replies_count: Option<i32>,
+    #[serde(rename = "mediaId")]
+    media_id: Option<i32>,
+    #[serde(rename = "mediaType")]
+    media_type: Option<String>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuMediaReactionVotesAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    #[serde(rename = "mediaReactionId")]
+    media_reaction_id: Option<i32>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuMediaReactionVoteResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuMediaReactionVotesAttributes,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuMediaReactionVoteResponse {
+    data: Option<KitsuMediaReactionVoteResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuMediaReactionVotesCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuMediaReactionVoteResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -4547,5 +4771,126 @@ mod tests {
             let attrs: KitsuLibraryEntryAttributes = serde_json::from_str(&json).expect("parse status");
             assert_eq!(attrs.status.as_deref(), Some(&status[..]));
         }
+    }
+
+    #[test]
+    fn kitsu_media_reaction_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "123",
+                "type": "mediaReactions",
+                "attributes": {
+                    "updatedAt": "2024-01-15T10:30:00Z",
+                    "createdAt": "2024-01-15T10:30:00Z",
+                    "body": "This anime is amazing!",
+                    "likesCount": 42,
+                    "repliesCount": 5,
+                    "mediaId": 12345,
+                    "mediaType": "anime",
+                    "userId": 789
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuMediaReactionResponse = serde_json::from_str(json).expect("parse media reaction");
+        let reaction = response.data.expect("data present");
+        assert_eq!(reaction.id, "123");
+        let attrs = reaction.attributes;
+        assert_eq!(attrs.body.as_deref(), Some("This anime is amazing!"));
+        assert_eq!(attrs.likes_count, Some(42));
+        assert_eq!(attrs.replies_count, Some(5));
+        assert_eq!(attrs.media_id, Some(12345));
+    }
+
+    #[test]
+    fn kitsu_media_reaction_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuMediaReactionResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_media_reactions_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "mediaReactions", "attributes": {"body": "Great anime", "likesCount": 10}},
+                {"id": "2", "type": "mediaReactions", "attributes": {"body": "Very good", "likesCount": 5}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/media-reactions?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuMediaReactionsCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_media_reaction_attributes_optional_fields() {
+        let json = r#"{
+            "updatedAt": null,
+            "createdAt": null,
+            "body": null,
+            "likesCount": null,
+            "repliesCount": null,
+            "mediaId": null,
+            "mediaType": null,
+            "userId": null
+        }"#;
+
+        let attrs: KitsuMediaReactionAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.body.is_none());
+        assert!(attrs.likes_count.is_none());
+        assert!(attrs.replies_count.is_none());
+    }
+
+    #[test]
+    fn kitsu_media_reaction_vote_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "456",
+                "type": "mediaReactionVotes",
+                "attributes": {
+                    "updatedAt": "2024-01-16T12:00:00Z",
+                    "createdAt": "2024-01-16T12:00:00Z",
+                    "mediaReactionId": 123,
+                    "userId": 789
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuMediaReactionVoteResponse = serde_json::from_str(json).expect("parse vote response");
+        let vote = response.data.expect("data present");
+        assert_eq!(vote.id, "456");
+        let attrs = vote.attributes;
+        assert_eq!(attrs.media_reaction_id, Some(123));
+        assert_eq!(attrs.user_id, Some(789));
+    }
+
+    #[test]
+    fn kitsu_media_reaction_vote_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuMediaReactionVoteResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_media_reaction_votes_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "mediaReactionVotes", "attributes": {"mediaReactionId": 1}},
+                {"id": "2", "type": "mediaReactionVotes", "attributes": {"mediaReactionId": 2}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/media-reaction-votes?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuMediaReactionVotesCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert!(response.links.next.is_some());
     }
 }
