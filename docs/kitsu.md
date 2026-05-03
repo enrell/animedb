@@ -43,6 +43,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 | GET | `/media-relationships/{id}` | ✅ Full |
 | GET | `/mappings` | ✅ Full |
 | GET | `/mappings/{id}` | ✅ Full |
+| GET | `/streamers` | ✅ Full |
+| GET | `/streamers/{id}` | ✅ Full |
 
 ---
 
@@ -288,8 +290,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/streamers` | ❌ Not Implemented |
-| Fetch Resource | GET | `/streamers/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/streamers` | ✅ Full |
+| Fetch Resource | GET | `/streamers/{id}` | ✅ Full |
 | Create Resource | POST | `/streamers` | ❌ Not Implemented |
 | Update Resource | PATCH | `/streamers/{id}` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/streamers/{id}` | ❌ Not Implemented |

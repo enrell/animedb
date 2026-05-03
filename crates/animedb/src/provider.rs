@@ -608,6 +608,59 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_streamers_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuStreamerAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/streamers", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "name".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuStreamersCollectionResponse>()?;
+
+        let streamers = response
+            .data
+            .iter()
+            .map(|s| s.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((streamers, next_cursor))
+    }
+
+    pub fn get_streamer(&self, streamer_id: &str) -> Result<Option<KitsuStreamerAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/streamers/{streamer_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuStreamerResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2685,6 +2738,41 @@ struct KitsuMappingsCollectionResponse {
     links: KitsuLinks,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuStreamerResponse {
+    data: Option<KitsuStreamerResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuStreamersCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuStreamerResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuStreamerResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuStreamerAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuStreamerAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    name: Option<String>,
+    slug: Option<String>,
+    url: Option<String>,
+    logo_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -3842,5 +3930,71 @@ mod tests {
         let attrs: KitsuMappingAttributes = serde_json::from_str(json).expect("parse empty attrs");
         assert_eq!(attrs.external_site.as_str(), "myanimelist");
         assert!(attrs.external_id.is_none());
+    }
+
+    #[test]
+    fn kitsu_streamer_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "999",
+                "type": "streamers",
+                "attributes": {
+                    "name": "Crunchyroll",
+                    "slug": "crunchyroll",
+                    "url": "https://crunchyroll.com",
+                    "logoUrl": "https://kitsu.io/streamers/crunchyroll.png"
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuStreamerResponse = serde_json::from_str(json).expect("parse streamer response");
+        let streamer = response.data.expect("data present");
+        assert_eq!(streamer.id, "999");
+        let attrs = streamer.attributes;
+        assert_eq!(attrs.name.as_deref(), Some("Crunchyroll"));
+        assert_eq!(attrs.slug.as_deref(), Some("crunchyroll"));
+        assert_eq!(attrs.url.as_deref(), Some("https://crunchyroll.com"));
+    }
+
+    #[test]
+    fn kitsu_streamer_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuStreamerResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_streamers_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "streamers", "attributes": {"name": "Crunchyroll"}},
+                {"id": "2", "type": "streamers", "attributes": {"name": "Funimation"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/streamers?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuStreamersCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_streamer_attributes_optional_fields() {
+        let json = r#"{
+            "name": null,
+            "slug": null,
+            "url": null,
+            "logoUrl": null
+        }"#;
+
+        let attrs: KitsuStreamerAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.name.is_none());
+        assert!(attrs.slug.is_none());
+        assert!(attrs.url.is_none());
+        assert!(attrs.logo_url.is_none());
     }
 }
