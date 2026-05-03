@@ -179,6 +179,60 @@ impl KitsuProvider {
             .map(|item| map_kitsu_media(item, &response.included, media_kind))
             .collect()
     }
+
+    pub fn fetch_episodes_page(
+        &self,
+        anime_id: &str,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuEpisodeAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/anime/{anime_id}/episodes", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "number".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuEpisodesCollectionResponse>()?;
+
+        let episodes = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((episodes, next_cursor))
+    }
+
+    pub fn get_episode(&self, episode_id: &str) -> Result<Option<KitsuEpisodeAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/episodes/{episode_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuEpisodeResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2088,6 +2142,51 @@ struct KitsuMappingAttributes {
     external_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuEpisodeResponse {
+    data: Option<KitsuEpisodeResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuEpisodesCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuEpisodeResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuEpisodeResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuEpisodeAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuEpisodeAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    description: Option<String>,
+    synopsis: Option<String>,
+    titles: KitsuTitles,
+    #[serde(rename = "canonicalTitle")]
+    canonical_title: Option<String>,
+    #[serde(rename = "seasonNumber")]
+    season_number: Option<i32>,
+    #[serde(rename = "episodeNumber")]
+    episode_number: Option<i32>,
+    #[serde(rename = "relativeNumber")]
+    relative_number: Option<i32>,
+    #[serde(rename = "airdate")]
+    airdate: Option<String>,
+    length: Option<i32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2578,5 +2677,81 @@ mod tests {
         assert_eq!(kitsu_kind_path(MediaKind::Show), "anime");
         assert_eq!(kitsu_kind_path(MediaKind::Manga), "manga");
         assert_eq!(kitsu_kind_path(MediaKind::Movie), "manga");
+    }
+
+    #[test]
+    fn kitsu_episode_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "12345",
+                "type": "episodes",
+                "attributes": {
+                    "titles": {"en": "The Beginning", "en_jp": "Hajimari"},
+                    "canonicalTitle": "The Beginning",
+                    "seasonNumber": 1,
+                    "episodeNumber": 1,
+                    "relativeNumber": 1,
+                    "airdate": "2020-04-01",
+                    "length": 1440,
+                    "description": "Episode 1 description",
+                    "synopsis": "Synopsis text"
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuEpisodeResponse = serde_json::from_str(json).expect("parse episode response");
+        let episode = response.data.expect("data present");
+        assert_eq!(episode.id, "12345");
+        let attrs = episode.attributes;
+        assert_eq!(attrs.episode_number, Some(1));
+        assert_eq!(attrs.season_number, Some(1));
+        assert_eq!(attrs.length, Some(1440));
+        assert_eq!(attrs.airdate.as_deref(), Some("2020-04-01"));
+    }
+
+    #[test]
+    fn kitsu_episode_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuEpisodeResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_episodes_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "episodes", "attributes": {"titles": {}, "episodeNumber": 1}},
+                {"id": "2", "type": "episodes", "attributes": {"titles": {}, "episodeNumber": 2}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/anime/1/episodes?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuEpisodesCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_episode_attributes_optional_fields() {
+        let json = r#"{
+            "titles": {},
+            "canonicalTitle": null,
+            "seasonNumber": null,
+            "episodeNumber": null,
+            "relativeNumber": null,
+            "airdate": null,
+            "length": null
+        }"#;
+
+        let attrs: KitsuEpisodeAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.canonical_title.is_none());
+        assert!(attrs.episode_number.is_none());
+        assert!(attrs.season_number.is_none());
+        assert!(attrs.airdate.is_none());
+        assert!(attrs.length.is_none());
     }
 }
