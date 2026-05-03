@@ -501,6 +501,61 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_media_relationships_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuMediaRelationshipAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/media-relationships", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuMediaRelationshipsCollectionResponse>()?;
+
+        let relationships = response
+            .data
+            .iter()
+            .map(|r| r.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((relationships, next_cursor))
+    }
+
+    pub fn get_media_relationship(
+        &self,
+        relationship_id: &str,
+    ) -> Result<Option<KitsuMediaRelationshipAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/media-relationships/{relationship_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuMediaRelationshipResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2524,6 +2579,43 @@ struct KitsuCastingAttributes {
     locale: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuMediaRelationshipResponse {
+    data: Option<KitsuMediaRelationshipResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuMediaRelationshipsCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuMediaRelationshipResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuMediaRelationshipResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuMediaRelationshipAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuMediaRelationshipAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "role")]
+    role: Option<String>,
+    #[serde(rename = "sourceType")]
+    source_type: Option<String>,
+    #[serde(rename = "targetType")]
+    target_type: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -3559,5 +3651,68 @@ mod tests {
         assert!(attrs.role.is_none());
         assert!(attrs.voice_actor.is_none());
         assert!(attrs.locale.is_none());
+    }
+
+    #[test]
+    fn kitsu_media_relationship_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "777",
+                "type": "mediaRelationships",
+                "attributes": {
+                    "role": "sequel",
+                    "sourceType": "anime",
+                    "targetType": "anime"
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuMediaRelationshipResponse = serde_json::from_str(json).expect("parse relationship response");
+        let relationship = response.data.expect("data present");
+        assert_eq!(relationship.id, "777");
+        let attrs = relationship.attributes;
+        assert_eq!(attrs.role.as_deref(), Some("sequel"));
+        assert_eq!(attrs.source_type.as_deref(), Some("anime"));
+        assert_eq!(attrs.target_type.as_deref(), Some("anime"));
+    }
+
+    #[test]
+    fn kitsu_media_relationship_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuMediaRelationshipResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_media_relationships_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "mediaRelationships", "attributes": {"role": "sequel"}},
+                {"id": "2", "type": "mediaRelationships", "attributes": {"role": "prequel"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/media-relationships?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuMediaRelationshipsCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_media_relationship_attributes_optional_fields() {
+        let json = r#"{
+            "role": null,
+            "sourceType": null,
+            "targetType": null
+        }"#;
+
+        let attrs: KitsuMediaRelationshipAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.role.is_none());
+        assert!(attrs.source_type.is_none());
+        assert!(attrs.target_type.is_none());
     }
 }
