@@ -556,6 +556,58 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_mappings_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuMappingAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/mappings", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuMappingsCollectionResponse>()?;
+
+        let mappings = response
+            .data
+            .iter()
+            .map(|m| m.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((mappings, next_cursor))
+    }
+
+    pub fn get_mapping(&self, mapping_id: &str) -> Result<Option<KitsuMappingAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/mappings/{mapping_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuMappingResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2616,6 +2668,23 @@ struct KitsuMediaRelationshipAttributes {
     target_type: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuMappingResponse {
+    data: Option<KitsuMappingResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuMappingsCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuMappingResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -3714,5 +3783,64 @@ mod tests {
         assert!(attrs.role.is_none());
         assert!(attrs.source_type.is_none());
         assert!(attrs.target_type.is_none());
+    }
+
+    #[test]
+    fn kitsu_mapping_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "888",
+                "type": "mappings",
+                "attributes": {
+                    "externalSite": "myanimelist",
+                    "externalId": "12345"
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuMappingResponse = serde_json::from_str(json).expect("parse mapping response");
+        let mapping = response.data.expect("data present");
+        assert_eq!(mapping.id, "888");
+        let attrs = mapping.attributes;
+        assert_eq!(attrs.external_site.as_str(), "myanimelist");
+        assert_eq!(attrs.external_id.as_deref(), Some("12345"));
+    }
+
+    #[test]
+    fn kitsu_mapping_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuMappingResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_mappings_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "mappings", "attributes": {"externalSite": "myanimelist", "externalId": "1"}},
+                {"id": "2", "type": "mappings", "attributes": {"externalSite": "anilist", "externalId": "2"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/mappings?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuMappingsCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_mapping_attributes_optional_external_id() {
+        let json = r#"{
+            "externalSite": "myanimelist",
+            "externalId": null
+        }"#;
+
+        let attrs: KitsuMappingAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert_eq!(attrs.external_site.as_str(), "myanimelist");
+        assert!(attrs.external_id.is_none());
     }
 }
