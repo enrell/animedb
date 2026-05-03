@@ -8,6 +8,7 @@ api
 *.db
 *.db-shm
 *.db-wal
+data/*
 
 # IDE and editor files
 .cursor/

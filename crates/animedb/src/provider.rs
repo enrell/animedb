@@ -769,6 +769,94 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_library_entries_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuLibraryEntryAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/library-entries", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "-updated_at".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuLibraryEntriesCollectionResponse>()?;
+
+        let entries = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((entries, next_cursor))
+    }
+
+    pub fn get_library_entry(&self, entry_id: &str) -> Result<Option<KitsuLibraryEntryAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/library-entries/{entry_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuLibraryEntryResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
+
+    pub fn fetch_user_library_entries(
+        &self,
+        user_id: &str,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuLibraryEntryAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/users/{user_id}/library-entries", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "-updated_at".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuLibraryEntriesCollectionResponse>()?;
+
+        let entries = response
+            .data
+            .iter()
+            .map(|e| e.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((entries, next_cursor))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2960,6 +3048,56 @@ struct KitsuUserAttributes {
     is_activated: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuLibraryEntryResponse {
+    data: Option<KitsuLibraryEntryResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuLibraryEntriesCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuLibraryEntryResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuLibraryEntryResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuLibraryEntryAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuLibraryEntryAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    status: Option<String>,
+    #[serde(rename = "progress")]
+    progress: Option<i32>,
+    #[serde(rename = "volumesOwned")]
+    volumes_owned: Option<i32>,
+    #[serde(rename = "isRewatching")]
+    is_rewatching: Option<bool>,
+    #[serde(rename = "rating")]
+    rating: Option<f64>,
+    #[serde(rename = "startedAt")]
+    started_at: Option<String>,
+    #[serde(rename = "finishedAt")]
+    finished_at: Option<String>,
+    #[serde(rename = "mediaId")]
+    media_id: Option<i32>,
+    #[serde(rename = "mediaType")]
+    media_type: Option<String>,
+    #[serde(rename = "userId")]
+    user_id: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -4320,5 +4458,94 @@ mod tests {
         assert!(attrs.email.is_none());
         assert!(attrs.avatar_url.is_none());
         assert!(attrs.is_activated.is_none());
+    }
+
+    #[test]
+    fn kitsu_library_entry_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "99999",
+                "type": "libraryEntries",
+                "attributes": {
+                    "status": "completed",
+                    "progress": 24,
+                    "volumesOwned": 0,
+                    "isRewatching": false,
+                    "rating": 9.5,
+                    "startedAt": "2020-01-15",
+                    "finishedAt": "2020-03-20",
+                    "mediaId": 12345,
+                    "mediaType": "anime",
+                    "userId": 123
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuLibraryEntryResponse = serde_json::from_str(json).expect("parse library entry response");
+        let entry = response.data.expect("data present");
+        assert_eq!(entry.id, "99999");
+        let attrs = entry.attributes;
+        assert_eq!(attrs.status.as_deref(), Some("completed"));
+        assert_eq!(attrs.progress, Some(24));
+        assert_eq!(attrs.rating, Some(9.5));
+        assert_eq!(attrs.media_type.as_deref(), Some("anime"));
+    }
+
+    #[test]
+    fn kitsu_library_entry_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuLibraryEntryResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_library_entries_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "libraryEntries", "attributes": {"status": "watching", "progress": 5}},
+                {"id": "2", "type": "libraryEntries", "attributes": {"status": "completed", "progress": 12}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/library-entries?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuLibraryEntriesCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_library_entry_attributes_optional_fields() {
+        let json = r#"{
+            "status": null,
+            "progress": null,
+            "volumesOwned": null,
+            "isRewatching": null,
+            "rating": null,
+            "startedAt": null,
+            "finishedAt": null,
+            "mediaId": null,
+            "mediaType": null,
+            "userId": null
+        }"#;
+
+        let attrs: KitsuLibraryEntryAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.status.is_none());
+        assert!(attrs.progress.is_none());
+        assert!(attrs.rating.is_none());
+        assert!(attrs.media_id.is_none());
+    }
+
+    #[test]
+    fn kitsu_library_entry_statuses() {
+        let statuses = ["current", "planning", "completed", "on_hold", "dropped"];
+        for status in &statuses {
+            let json = format!(r#"{{"status": "{status}", "progress": 1, "mediaId": 1, "mediaType": "anime", "userId": 1}}"#);
+            let attrs: KitsuLibraryEntryAttributes = serde_json::from_str(&json).expect("parse status");
+            assert_eq!(attrs.status.as_deref(), Some(&status[..]));
+        }
     }
 }
