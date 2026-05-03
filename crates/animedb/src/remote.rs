@@ -1,10 +1,30 @@
+//! Remote-first facade over the supported metadata providers.
+//!
+//! # Design
+//!
+//! [`RemoteApi`] wraps a `Box<dyn Provider>` so that adding a new provider
+//! requires **zero changes** to this file — only the provider struct and a
+//! new constructor on `RemoteApi`.
+//!
+//! The old `match self.source { … }` style required editing `remote.rs` every
+//! time a provider was added or removed.  By storing the trait object we
+//! decouple the dispatch entirely.
+use std::sync::Arc;
+
 use crate::error::Result;
 use crate::model::{CanonicalMedia, MediaKind, SearchOptions};
 use crate::provider::{
-    AniListProvider, JikanProvider, KitsuProvider, RemoteProvider, TvmazeProvider,
+    AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, Provider, TvmazeProvider,
 };
 
-/// Remote providers supported by the simplified facade.
+// ---------------------------------------------------------------------------
+// RemoteSource — kept for compatibility; maps to concrete providers
+// ---------------------------------------------------------------------------
+
+/// Named variants for the built-in providers.
+///
+/// Using [`RemoteApi::new`] with a `Box<dyn Provider>` is preferred for new
+/// code; this enum exists for ergonomic constructors and serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteSource {
     AniList,
@@ -26,12 +46,16 @@ impl RemoteSource {
     }
 }
 
-/// Remote-first facade over the supported metadata providers.
+// ---------------------------------------------------------------------------
+// RemoteApi
+// ---------------------------------------------------------------------------
+
+/// Remote-first facade over a single metadata provider.
 ///
-/// This type is intended for clients that want normalized metadata access without creating
-/// or syncing a local SQLite catalog.
+/// Construct it with one of the named constructors (`::anilist()`, etc.) or
+/// wrap any `Provider` impl with `RemoteApi::with_provider(my_provider)`.
 pub struct RemoteApi {
-    source: RemoteSource,
+    provider: Arc<dyn Provider>,
 }
 
 impl Default for RemoteApi {
@@ -41,57 +65,78 @@ impl Default for RemoteApi {
 }
 
 impl RemoteApi {
-    /// Creates a remote API facade for the selected provider.
-    pub fn new(source: RemoteSource) -> Self {
-        Self { source }
-    }
+    // -- Named constructors -------------------------------------------------
 
-    /// Creates an AniList facade.
     pub fn anilist() -> Self {
-        Self::new(RemoteSource::AniList)
+        Self::with_provider(AniListProvider::new())
     }
 
-    /// Creates a Jikan facade.
     pub fn jikan() -> Self {
-        Self::new(RemoteSource::Jikan)
+        Self::with_provider(JikanProvider::new())
     }
 
-    /// Creates a Kitsu facade.
     pub fn kitsu() -> Self {
-        Self::new(RemoteSource::Kitsu)
+        Self::with_provider(KitsuProvider::new())
     }
 
-    /// Creates a TVmaze facade.
     pub fn tvmaze() -> Self {
-        Self::new(RemoteSource::Tvmaze)
+        Self::with_provider(TvmazeProvider::new())
     }
 
-    /// Creates an IMDb facade.
     pub fn imdb() -> Self {
-        Self::new(RemoteSource::Imdb)
+        Self::with_provider(ImdbProvider::new())
     }
 
-    pub fn source(&self) -> RemoteSource {
-        self.source
+    // -- Generic constructor ------------------------------------------------
+
+    /// Wraps any type that implements [`Provider`].
+    pub fn with_provider<P: Provider + 'static>(provider: P) -> Self {
+        Self {
+            provider: Arc::new(provider),
+        }
     }
+
+    // -- Accessors ----------------------------------------------------------
+
+    /// Returns a handle to the underlying provider (for introspection / tests).
+    pub fn provider(&self) -> &dyn Provider {
+        self.provider.as_ref()
+    }
+
+    // -- Query API ----------------------------------------------------------
 
     /// Searches the selected provider directly.
     pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<CanonicalMedia>> {
-        match self.source {
-            RemoteSource::AniList => AniListProvider::default().search(query, options),
-            RemoteSource::Jikan => JikanProvider::default().search(query, options),
-            RemoteSource::Kitsu => KitsuProvider::default().search(query, options),
-            RemoteSource::Tvmaze => TvmazeProvider::default().search(query, options),
-            RemoteSource::Imdb => Err(crate::error::Error::Validation(
-                "IMDb remote search requires downloading the full dataset; use sync instead".into(),
-            )),
-        }
+        self.provider.search(query, options)
+    }
+
+    /// Fetches trending media for the given media kind directly from the provider.
+    pub fn fetch_trending(&self, media_kind: MediaKind) -> Result<Vec<CanonicalMedia>> {
+        self.provider.fetch_trending(media_kind)
+    }
+
+    /// Fetches recommendations for the given source ID directly from the provider.
+    pub fn fetch_recommendations(
+        &self,
+        media_kind: MediaKind,
+        source_id: &str,
+    ) -> Result<Vec<CanonicalMedia>> {
+        self.provider.fetch_recommendations(media_kind, source_id)
+    }
+
+    /// Fetches related media for the given source ID directly from the provider.
+    pub fn fetch_related(
+        &self,
+        media_kind: MediaKind,
+        source_id: &str,
+    ) -> Result<Vec<CanonicalMedia>> {
+        self.provider.fetch_related(media_kind, source_id)
     }
 
     /// Narrows queries to anime records.
     pub fn anime_metadata(&self) -> RemoteCollection {
         RemoteCollection::new(
-            self.source,
+            Arc::clone(&self.provider),
             SearchOptions::default().with_media_kind(MediaKind::Anime),
         )
     }
@@ -99,7 +144,7 @@ impl RemoteApi {
     /// Narrows queries to manga records.
     pub fn manga_metadata(&self) -> RemoteCollection {
         RemoteCollection::new(
-            self.source,
+            Arc::clone(&self.provider),
             SearchOptions::default().with_media_kind(MediaKind::Manga),
         )
     }
@@ -107,7 +152,7 @@ impl RemoteApi {
     /// Narrows queries to anime movies.
     pub fn movie_metadata(&self) -> RemoteCollection {
         RemoteCollection::new(
-            self.source,
+            Arc::clone(&self.provider),
             SearchOptions::default()
                 .with_media_kind(MediaKind::Anime)
                 .with_format("MOVIE"),
@@ -115,19 +160,19 @@ impl RemoteApi {
     }
 }
 
-/// Filtered view over one remote provider and one media slice.
+// ---------------------------------------------------------------------------
+// RemoteCollection
+// ---------------------------------------------------------------------------
+
+/// Filtered view over one provider and one media slice.
 pub struct RemoteCollection {
-    source: RemoteSource,
+    provider: Arc<dyn Provider>,
     options: SearchOptions,
 }
 
 impl RemoteCollection {
-    fn new(source: RemoteSource, options: SearchOptions) -> Self {
-        Self { source, options }
-    }
-
-    pub fn source(&self) -> RemoteSource {
-        self.source
+    fn new(provider: Arc<dyn Provider>, options: SearchOptions) -> Self {
+        Self { provider, options }
     }
 
     pub fn options(&self) -> &SearchOptions {
@@ -135,69 +180,90 @@ impl RemoteCollection {
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<CanonicalMedia>> {
-        match self.source {
-            RemoteSource::AniList => AniListProvider::default().search(query, self.options.clone()),
-            RemoteSource::Jikan => JikanProvider::default().search(query, self.options.clone()),
-            RemoteSource::Kitsu => KitsuProvider::default().search(query, self.options.clone()),
-            RemoteSource::Tvmaze => TvmazeProvider::default().search(query, self.options.clone()),
-            RemoteSource::Imdb => Err(crate::error::Error::Validation(
-                "IMDb remote search requires downloading the full dataset; use sync instead".into(),
-            )),
-        }
+        self.provider.search(query, self.options.clone())
     }
 
     pub fn by_id(&self, source_id: &str) -> Result<Option<CanonicalMedia>> {
-        let media_kind = self.options.media_kind.unwrap_or(MediaKind::Anime);
-        let item = match self.source {
-            RemoteSource::AniList => AniListProvider::default().get_by_id(media_kind, source_id)?,
-            RemoteSource::Jikan => JikanProvider::default().get_by_id(media_kind, source_id)?,
-            RemoteSource::Kitsu => KitsuProvider::default().get_by_id(media_kind, source_id)?,
-            RemoteSource::Tvmaze => TvmazeProvider::default().get_by_id(media_kind, source_id)?,
-            RemoteSource::Imdb => {
-                return Err(crate::error::Error::Validation(
-                    "IMDb remote lookup requires downloading the full dataset; use sync instead"
-                        .into(),
-                ));
-            }
-        };
+        let kind = self.options.media_kind.unwrap_or(MediaKind::Anime);
+        let item = self.provider.get_by_id(kind, source_id)?;
 
-        Ok(item.filter(|media| {
+        Ok(item.filter(|m| {
             self.options
                 .format
                 .as_ref()
-                .map(|format| {
-                    media
-                        .format
+                .map(|fmt| {
+                    m.format
                         .as_ref()
-                        .map(|value| value.eq_ignore_ascii_case(format))
+                        .map(|v| v.eq_ignore_ascii_case(fmt))
                         == Some(true)
                 })
                 .unwrap_or(true)
         }))
     }
+
+    pub fn trending(&self) -> Result<Vec<CanonicalMedia>> {
+        let kind = self.options.media_kind.unwrap_or(MediaKind::Anime);
+        self.provider.fetch_trending(kind)
+    }
+
+    pub fn recommendations(&self, source_id: &str) -> Result<Vec<CanonicalMedia>> {
+        let kind = self.options.media_kind.unwrap_or(MediaKind::Anime);
+        self.provider.fetch_recommendations(kind, source_id)
+    }
+
+    pub fn related(&self, source_id: &str) -> Result<Vec<CanonicalMedia>> {
+        let kind = self.options.media_kind.unwrap_or(MediaKind::Anime);
+        self.provider.fetch_related(kind, source_id)
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Compatibility: keep RemoteSource-based constructors via From
+// ---------------------------------------------------------------------------
+
+impl From<RemoteSource> for RemoteApi {
+    fn from(source: RemoteSource) -> Self {
+        match source {
+            RemoteSource::AniList => Self::anilist(),
+            RemoteSource::Jikan => Self::jikan(),
+            RemoteSource::Kitsu => Self::kitsu(),
+            RemoteSource::Tvmaze => Self::tvmaze(),
+            RemoteSource::Imdb => Self::imdb(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::SourceName;
 
     #[test]
     fn default_remote_api_uses_anilist() {
         let api = RemoteApi::default();
-        assert_eq!(api.source(), RemoteSource::AniList);
+        assert_eq!(api.provider().source(), SourceName::AniList);
     }
 
     #[test]
-    fn movie_collection_is_anime_with_movie_format() {
-        let collection = RemoteApi::jikan().movie_metadata();
-        assert_eq!(collection.source(), RemoteSource::Jikan);
-        assert_eq!(collection.options().media_kind, Some(MediaKind::Anime));
-        assert_eq!(collection.options().format.as_deref(), Some("MOVIE"));
+    fn movie_collection_defaults_to_anime_movie_format() {
+        let col = RemoteApi::jikan().movie_metadata();
+        assert_eq!(col.options().media_kind, Some(MediaKind::Anime));
+        assert_eq!(col.options().format.as_deref(), Some("MOVIE"));
     }
 
     #[test]
-    fn kitsu_constructor_uses_kitsu() {
+    fn kitsu_provider_has_correct_source() {
         let api = RemoteApi::kitsu();
-        assert_eq!(api.source(), RemoteSource::Kitsu);
+        assert_eq!(api.provider().source(), SourceName::Kitsu);
+    }
+
+    #[test]
+    fn custom_provider_via_with_provider() {
+        let api = RemoteApi::with_provider(TvmazeProvider::new());
+        assert_eq!(api.provider().source(), SourceName::Tvmaze);
     }
 }

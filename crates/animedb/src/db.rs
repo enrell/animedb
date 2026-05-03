@@ -13,7 +13,7 @@ use crate::model::{
     SyncReport, SyncRequest,
 };
 use crate::provider::{
-    AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, RemoteProvider, TvmazeProvider,
+    AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, Provider, TvmazeProvider,
 };
 use crate::remote::{RemoteApi, RemoteSource};
 
@@ -29,7 +29,7 @@ pub struct AnimeDb {
 impl AnimeDb {
     /// Builds a remote-only facade for a selected provider.
     pub fn remote(source: RemoteSource) -> RemoteApi {
-        RemoteApi::new(source)
+        RemoteApi::from(source)
     }
 
     /// Builds a remote-only AniList facade.
@@ -427,7 +427,7 @@ impl AnimeDb {
         )
     }
 
-    pub fn sync_from<P: RemoteProvider>(
+    pub fn sync_from<P: Provider>(
         &mut self,
         provider: &P,
         request: SyncRequest,
@@ -1131,21 +1131,20 @@ impl<'a> MetadataCollection<'a> {
     }
 
     fn matches_media(&self, media: &StoredMedia) -> bool {
-        if let Some(kind) = self.options.media_kind {
-            if media.media_kind != kind {
-                return false;
-            }
+        if let Some(kind) = self.options.media_kind
+            && media.media_kind != kind
+        {
+            return false;
         }
 
-        if let Some(format) = &self.options.format {
-            if media
+        if let Some(format) = &self.options.format
+            && media
                 .format
                 .as_ref()
                 .map(|value| value.eq_ignore_ascii_case(format))
                 != Some(true)
-            {
-                return false;
-            }
+        {
+            return false;
         }
 
         true
@@ -1792,13 +1791,13 @@ fn ensure_no_conflicts(
             )
             .optional()?;
 
-        if let (Some(expected), Some(found)) = (expected_media_id, found_media_id) {
-            if expected != found {
-                return Err(Error::ConflictingExternalId {
-                    provider: external_id.source.to_string(),
-                    source_id: external_id.source_id.clone(),
-                });
-            }
+        if let (Some(expected), Some(found)) = (expected_media_id, found_media_id)
+            && expected != found
+        {
+            return Err(Error::ConflictingExternalId {
+                provider: external_id.source.to_string(),
+                source_id: external_id.source_id.clone(),
+            });
         }
     }
 

@@ -339,8 +339,9 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/favorites` | ❌ Not Implemented |
-| Fetch Resource | GET | `/favorites/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/favorites` | ✅ Full |
+| Fetch Resource | GET | `/favorites/{id}` | ✅ Full |
+| Fetch User Favorites | GET | `/favorites?filter[user_id]={id}` | ✅ Full |
 | Create Resource | POST | `/favorites` | ❌ Not Implemented |
 | Update Resource | PATCH | `/favorites/{id}` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/favorites/{id}` | ❌ Not Implemented |
@@ -503,8 +504,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/posts` | ❌ Not Implemented |
-| Fetch Resource | GET | `/posts/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/posts` | ✅ Full |
+| Fetch Resource | GET | `/posts/{id}` | ✅ Full |
 | Create Resource | POST | `/posts` | ❌ Not Implemented |
 | Update Resource | PATCH | `/posts/{id}` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/posts/{id}` | ❌ Not Implemented |
@@ -513,8 +514,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/post-likes` | ❌ Not Implemented |
-| Fetch Resource | GET | `/post-likes/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/post-likes` | ✅ Full |
+| Fetch Resource | GET | `/post-likes/{id}` | ✅ Full |
 | Create Resource | POST | `/post-likes` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/post-likes/{id}` | ❌ Not Implemented |
 
@@ -535,8 +536,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/comments` | ❌ Not Implemented |
-| Fetch Resource | GET | `/comments/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/comments` | ✅ Full |
+| Fetch Resource | GET | `/comments/{id}` | ✅ Full |
 | Create Resource | POST | `/comments` | ❌ Not Implemented |
 | Update Resource | PATCH | `/comments/{id}` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/comments/{id}` | ❌ Not Implemented |
@@ -545,8 +546,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Status |
 |-----------|--------|------|--------|
-| Fetch Collection | GET | `/comment-likes` | ❌ Not Implemented |
-| Fetch Resource | GET | `/comment-likes/{id}` | ❌ Not Implemented |
+| Fetch Collection | GET | `/comment-likes` | ✅ Full |
+| Fetch Resource | GET | `/comment-likes/{id}` | ✅ Full |
 | Create Resource | POST | `/comment-likes` | ❌ Not Implemented |
 | Delete Resource | DELETE | `/comment-likes/{id}` | ❌ Not Implemented |
 

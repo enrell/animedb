@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::model::{CanonicalMedia, MediaKind, SearchOptions};
-use crate::provider::{AniListProvider, RemoteProvider};
+use crate::provider::{AniListProvider, Provider};
 
 pub struct RemoteCatalog<P = AniListProvider> {
     provider: P,
@@ -12,7 +12,7 @@ impl Default for RemoteCatalog<AniListProvider> {
     }
 }
 
-impl<P: RemoteProvider> RemoteCatalog<P> {
+impl<P: Provider> RemoteCatalog<P> {
     pub fn new(provider: P) -> Self {
         Self { provider }
     }
@@ -68,7 +68,7 @@ pub struct RemoteMetadataCollection<'a, P> {
     options: SearchOptions,
 }
 
-impl<'a, P: RemoteProvider> RemoteMetadataCollection<'a, P> {
+impl<'a, P: Provider> RemoteMetadataCollection<'a, P> {
     fn new(provider: &'a P, options: SearchOptions) -> Self {
         Self { provider, options }
     }

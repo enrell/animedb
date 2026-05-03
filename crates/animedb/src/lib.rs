@@ -30,26 +30,33 @@ mod db;
 mod error;
 mod merge;
 mod model;
-mod provider;
+pub mod provider;
 mod remote;
 
-// --- Pure data types: always available (no SQLite dependency) ---
+// ---------------------------------------------------------------------------
+// Pure data types: always available (no SQLite dependency)
+// ---------------------------------------------------------------------------
 
 pub use error::{Error, Result};
 pub use model::{
     CanonicalMedia, ExternalId, FieldProvenance, MediaKind, SearchHit, SearchOptions,
     SourceName, SourcePayload, StoredMedia,
 };
+
+// Provider trait and concrete provider structs.
 pub use provider::{
-    AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, RemotePage, RemoteProvider,
+    AniListProvider, FetchPage, ImdbProvider, JikanProvider, KitsuProvider, Provider,
     TvmazeProvider,
 };
+
 pub use remote::{RemoteApi, RemoteCollection, RemoteSource};
 
 // Re-export sync-related types — they are pure data, no SQLite needed.
 pub use model::{SyncCursor, SyncMode, SyncRequest, SyncOutcome, SyncReport, PersistedSyncState};
 
-// --- local-db only: requires rusqlite ---
+// ---------------------------------------------------------------------------
+// local-db only: requires rusqlite
+// ---------------------------------------------------------------------------
 
 #[cfg(feature = "local-db")]
 pub use catalog::{RemoteCatalog, RemoteMetadataCollection};
