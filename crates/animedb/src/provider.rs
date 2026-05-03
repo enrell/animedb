@@ -449,6 +449,58 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_castings_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuCastingAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/castings", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCastingsCollectionResponse>()?;
+
+        let castings = response
+            .data
+            .iter()
+            .map(|c| c.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((castings, next_cursor))
+    }
+
+    pub fn get_casting(&self, casting_id: &str) -> Result<Option<KitsuCastingAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/castings/{casting_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuCastingResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2435,6 +2487,43 @@ struct KitsuPersonAttributes {
     language: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuCastingResponse {
+    data: Option<KitsuCastingResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCastingsCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuCastingResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCastingResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuCastingAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuCastingAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    #[serde(rename = "role")]
+    role: Option<String>,
+    #[serde(rename = "voiceActor")]
+    voice_actor: Option<String>,
+    #[serde(rename = "locale")]
+    locale: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -3407,5 +3496,68 @@ mod tests {
         assert!(attrs.image_url.is_none());
         assert!(attrs.mal_id.is_none());
         assert!(attrs.language.is_none());
+    }
+
+    #[test]
+    fn kitsu_casting_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "555",
+                "type": "castings",
+                "attributes": {
+                    "role": "Main",
+                    "voiceActor": "Takahata",
+                    "locale": "Japanese"
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuCastingResponse = serde_json::from_str(json).expect("parse casting response");
+        let casting = response.data.expect("data present");
+        assert_eq!(casting.id, "555");
+        let attrs = casting.attributes;
+        assert_eq!(attrs.role.as_deref(), Some("Main"));
+        assert_eq!(attrs.voice_actor.as_deref(), Some("Takahata"));
+        assert_eq!(attrs.locale.as_deref(), Some("Japanese"));
+    }
+
+    #[test]
+    fn kitsu_casting_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuCastingResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_castings_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "castings", "attributes": {"role": "Main"}},
+                {"id": "2", "type": "castings", "attributes": {"role": "Supporting"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/castings?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuCastingsCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_casting_attributes_optional_fields() {
+        let json = r#"{
+            "role": null,
+            "voiceActor": null,
+            "locale": null
+        }"#;
+
+        let attrs: KitsuCastingAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.role.is_none());
+        assert!(attrs.voice_actor.is_none());
+        assert!(attrs.locale.is_none());
     }
 }
