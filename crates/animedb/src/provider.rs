@@ -396,6 +396,59 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_people_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuPersonAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/people", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "name".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuPeopleCollectionResponse>()?;
+
+        let people = response
+            .data
+            .iter()
+            .map(|p| p.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((people, next_cursor))
+    }
+
+    pub fn get_person(&self, person_id: &str) -> Result<Option<KitsuPersonAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/people/{person_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuPersonResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2341,6 +2394,47 @@ struct KitsuCharacterAttributes {
     mal_id: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuPersonResponse {
+    data: Option<KitsuPersonResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuPeopleCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuPersonResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuPersonResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuPersonAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuPersonAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(rename = "imageUrl")]
+    image_url: Option<String>,
+    #[serde(rename = "canonicalName")]
+    canonical_name: Option<String>,
+    #[serde(rename = "malId")]
+    mal_id: Option<i32>,
+    #[serde(rename = "language")]
+    language: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -3242,5 +3336,76 @@ mod tests {
         assert!(attrs.description.is_none());
         assert!(attrs.image_url.is_none());
         assert!(attrs.mal_id.is_none());
+    }
+
+    #[test]
+    fn kitsu_person_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "789",
+                "type": "people",
+                "attributes": {
+                    "name": "Hayao Miyazaki",
+                    "description": "Famous anime director",
+                    "imageUrl": "https://kitsu.io/people/789.jpg",
+                    "canonicalName": "Miyazaki Hayao",
+                    "malId": 123,
+                    "language": "Japanese"
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuPersonResponse = serde_json::from_str(json).expect("parse person response");
+        let person = response.data.expect("data present");
+        assert_eq!(person.id, "789");
+        let attrs = person.attributes;
+        assert_eq!(attrs.name.as_deref(), Some("Hayao Miyazaki"));
+        assert_eq!(attrs.language.as_deref(), Some("Japanese"));
+        assert_eq!(attrs.mal_id, Some(123));
+    }
+
+    #[test]
+    fn kitsu_person_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuPersonResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_people_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "people", "attributes": {"name": "Miyazaki"}},
+                {"id": "2", "type": "people", "attributes": {"name": "Takahata"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/people?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuPeopleCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_person_attributes_optional_fields() {
+        let json = r#"{
+            "name": null,
+            "description": null,
+            "imageUrl": null,
+            "canonicalName": null,
+            "malId": null,
+            "language": null
+        }"#;
+
+        let attrs: KitsuPersonAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.name.is_none());
+        assert!(attrs.description.is_none());
+        assert!(attrs.image_url.is_none());
+        assert!(attrs.mal_id.is_none());
+        assert!(attrs.language.is_none());
     }
 }
