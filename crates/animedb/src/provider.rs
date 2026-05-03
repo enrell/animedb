@@ -716,6 +716,59 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_users_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuUserAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/users", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "name".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuUsersCollectionResponse>()?;
+
+        let users = response
+            .data
+            .iter()
+            .map(|u| u.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((users, next_cursor))
+    }
+
+    pub fn get_user(&self, user_id: &str) -> Result<Option<KitsuUserAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/users/{user_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuUserResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2866,6 +2919,47 @@ struct KitsuStreamingLinkAttributes {
     media_type: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuUserResponse {
+    data: Option<KitsuUserResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuUsersCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuUserResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuUserResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuUserAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuUserAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    name: Option<String>,
+    email: Option<String>,
+    #[serde(rename = "avatarUrl")]
+    avatar_url: Option<String>,
+    #[serde(rename = "profileUrl")]
+    profile_url: Option<String>,
+    #[serde(rename = "lifeSpentOnAnime")]
+    life_spent_on_anime: Option<i32>,
+    #[serde(rename = "isActivated")]
+    is_activated: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuMappingResource {
     id: String,
@@ -4156,5 +4250,75 @@ mod tests {
         assert!(attrs.streaming_site.is_none());
         assert!(attrs.media_id.is_none());
         assert!(attrs.media_type.is_none());
+    }
+
+    #[test]
+    fn kitsu_user_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "12345",
+                "type": "users",
+                "attributes": {
+                    "name": "anime_fan",
+                    "email": "anime@example.com",
+                    "avatarUrl": "https://kitsu.io/users/12345/avatar.png",
+                    "profileUrl": "https://kitsu.io/users/12345",
+                    "lifeSpentOnAnime": 5000,
+                    "isActivated": true
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuUserResponse = serde_json::from_str(json).expect("parse user response");
+        let user = response.data.expect("data present");
+        assert_eq!(user.id, "12345");
+        let attrs = user.attributes;
+        assert_eq!(attrs.name.as_deref(), Some("anime_fan"));
+        assert_eq!(attrs.life_spent_on_anime, Some(5000));
+        assert_eq!(attrs.is_activated, Some(true));
+    }
+
+    #[test]
+    fn kitsu_user_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuUserResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_users_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "users", "attributes": {"name": "user1"}},
+                {"id": "2", "type": "users", "attributes": {"name": "user2"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/users?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuUsersCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_user_attributes_optional_fields() {
+        let json = r#"{
+            "name": null,
+            "email": null,
+            "avatarUrl": null,
+            "profileUrl": null,
+            "lifeSpentOnAnime": null,
+            "isActivated": null
+        }"#;
+
+        let attrs: KitsuUserAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.name.is_none());
+        assert!(attrs.email.is_none());
+        assert!(attrs.avatar_url.is_none());
+        assert!(attrs.is_activated.is_none());
     }
 }
