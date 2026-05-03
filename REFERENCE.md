@@ -140,13 +140,53 @@ SQLite configuration applied by the crate:
 
 ### Providers
 
-The current remote providers are:
+The current remote providers all implement the `Provider` trait:
 
 - `AniListProvider`
 - `JikanProvider`
 - `KitsuProvider`
+- `TvmazeProvider`
+- `ImdbProvider`
 
-All current providers normalize adult content into the canonical `nsfw` field.
+### Provider trait
+
+```rust
+pub trait Provider: Send + Sync {
+    fn source(&self) -> SourceName;
+
+    /// Minimum wall-clock delay between successive requests to this provider.
+    fn min_interval(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    fn fetch_page(&self, request: &SyncRequest, cursor: SyncCursor) -> Result<FetchPage>;
+
+    fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<CanonicalMedia>>;
+
+    fn get_by_id(&self, media_kind: MediaKind, source_id: &str) -> Result<Option<CanonicalMedia>>;
+
+    /// Fetches currently trending or popular media, ideal for seeding catalogs.
+    fn fetch_trending(&self, media_kind: MediaKind) -> Result<Vec<CanonicalMedia>> { ... }
+
+    /// Fetches recommendations based on a given media item.
+    fn fetch_recommendations(&self, media_kind: MediaKind, source_id: &str) -> Result<Vec<CanonicalMedia>> { ... }
+
+    /// Fetches related media (sequels, prequels, spin-offs, etc.) for a given media item.
+    fn fetch_related(&self, media_kind: MediaKind, source_id: &str) -> Result<Vec<CanonicalMedia>> { ... }
+}
+```
+
+### FetchPage
+
+```rust
+pub struct FetchPage {
+    pub items: Vec<CanonicalMedia>,
+    /// `None` when the provider has no more pages.
+    pub next_cursor: Option<SyncCursor>,
+}
+```
+
+All providers normalize adult content into the canonical `nsfw` field.
 
 ## Crate `animedb-api`
 
