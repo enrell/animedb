@@ -233,6 +233,60 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_chapters_page(
+        &self,
+        manga_id: &str,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuChapterAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/manga/{manga_id}/chapters", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "number".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuChaptersCollectionResponse>()?;
+
+        let chapters = response
+            .data
+            .iter()
+            .map(|c| c.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((chapters, next_cursor))
+    }
+
+    pub fn get_chapter(&self, chapter_id: &str) -> Result<Option<KitsuChapterAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/chapters/{chapter_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuChapterResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2187,6 +2241,51 @@ struct KitsuEpisodeAttributes {
     length: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KitsuChapterResponse {
+    data: Option<KitsuChapterResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuChaptersCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuChapterResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuChapterResource {
+    id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
+    attributes: KitsuChapterAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KitsuChapterAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
+    description: Option<String>,
+    synopsis: Option<String>,
+    titles: KitsuTitles,
+    #[serde(rename = "canonicalTitle")]
+    canonical_title: Option<String>,
+    #[serde(rename = "chapterNumber")]
+    chapter_number: Option<i32>,
+    #[serde(rename = "volumeNumber")]
+    volume_number: Option<i32>,
+    #[serde(rename = "relativeNumber")]
+    relative_number: Option<i32>,
+    #[serde(rename = "published")]
+    published: Option<String>,
+    length: Option<i32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2752,6 +2851,82 @@ mod tests {
         assert!(attrs.episode_number.is_none());
         assert!(attrs.season_number.is_none());
         assert!(attrs.airdate.is_none());
+        assert!(attrs.length.is_none());
+    }
+
+    #[test]
+    fn kitsu_chapter_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "98765",
+                "type": "chapters",
+                "attributes": {
+                    "titles": {"en": "Chapter 1", "en_jp": "Dai-1-shou"},
+                    "canonicalTitle": "Chapter 1",
+                    "chapterNumber": 1,
+                    "volumeNumber": 1,
+                    "relativeNumber": 1,
+                    "published": "2020-01-01",
+                    "length": 30,
+                    "description": "Chapter description",
+                    "synopsis": "Synopsis text"
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuChapterResponse = serde_json::from_str(json).expect("parse chapter response");
+        let chapter = response.data.expect("data present");
+        assert_eq!(chapter.id, "98765");
+        let attrs = chapter.attributes;
+        assert_eq!(attrs.chapter_number, Some(1));
+        assert_eq!(attrs.volume_number, Some(1));
+        assert_eq!(attrs.length, Some(30));
+        assert_eq!(attrs.published.as_deref(), Some("2020-01-01"));
+    }
+
+    #[test]
+    fn kitsu_chapter_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuChapterResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_chapters_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "chapters", "attributes": {"titles": {}, "chapterNumber": 1}},
+                {"id": "2", "type": "chapters", "attributes": {"titles": {}, "chapterNumber": 2}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/manga/1/chapters?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuChaptersCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_chapter_attributes_optional_fields() {
+        let json = r#"{
+            "titles": {},
+            "canonicalTitle": null,
+            "chapterNumber": null,
+            "volumeNumber": null,
+            "relativeNumber": null,
+            "published": null,
+            "length": null
+        }"#;
+
+        let attrs: KitsuChapterAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.canonical_title.is_none());
+        assert!(attrs.chapter_number.is_none());
+        assert!(attrs.volume_number.is_none());
+        assert!(attrs.published.is_none());
         assert!(attrs.length.is_none());
     }
 }

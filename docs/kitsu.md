@@ -29,6 +29,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 | GET | `/trending/manga` | ✅ Full |
 | GET | `/anime/{id}/episodes` | ✅ Full |
 | GET | `/episodes/{id}` | ✅ Full |
+| GET | `/manga/{id}/chapters` | ✅ Full |
+| GET | `/chapters/{id}` | ✅ Full |
 
 ---
 
@@ -93,8 +95,8 @@ The `KitsuProvider` struct implements the `RemoteProvider` trait with three core
 
 | Operation | Method | Path | Query Params | Status |
 |-----------|--------|------|--------------|--------|
-| Fetch Collection | GET | `/chapters` | `page[limit]`, `page[offset]` | ❌ Not Implemented |
-| Fetch Resource | GET | `/chapters/{id}` | — | ❌ Not Implemented |
+| Fetch Collection | GET | `/chapters` | `page[limit]`, `page[offset]` | ✅ Full |
+| Fetch Resource | GET | `/chapters/{id}` | — | ✅ Full |
 
 **Not Implemented:**
 
