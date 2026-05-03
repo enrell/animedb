@@ -287,6 +287,59 @@ impl KitsuProvider {
 
         Ok(Some(item.attributes))
     }
+
+    pub fn fetch_categories_page(
+        &self,
+        cursor: SyncCursor,
+        page_size: usize,
+    ) -> Result<(Vec<KitsuCategoryAttributes>, Option<SyncCursor>)> {
+        let page_size = page_size.clamp(1, 20);
+        let offset = cursor.page.saturating_sub(1) * page_size;
+
+        let response = self
+            .client
+            .get(format!("{}/categories", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[
+                ("page[limit]", page_size.to_string()),
+                ("page[offset]", offset.to_string()),
+                ("sort", "title".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCategoriesCollectionResponse>()?;
+
+        let categories = response
+            .data
+            .iter()
+            .map(|c| c.attributes.clone())
+            .collect();
+
+        let next_cursor = response.links.next.as_ref().map(|_| SyncCursor {
+            page: cursor.page + 1,
+        });
+
+        Ok((categories, next_cursor))
+    }
+
+    pub fn get_category(&self, category_id: &str) -> Result<Option<KitsuCategoryAttributes>> {
+        let response = self
+            .client
+            .get(format!("{}/categories/{category_id}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let response = response.error_for_status()?.json::<KitsuCategoryResponse>()?;
+        let Some(item) = response.data else {
+            return Ok(None);
+        };
+
+        Ok(Some(item.attributes))
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -2174,12 +2227,23 @@ enum KitsuIncluded {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuCategoryResource {
     id: String,
+    #[serde(rename = "type")]
+    _resource_type: String,
     attributes: KitsuCategoryAttributes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KitsuCategoryAttributes {
+    #[serde(rename = "updatedAt")]
+    updated_at: Option<String>,
     title: Option<String>,
+    description: Option<String>,
+    #[serde(rename = "totalMediaCount")]
+    total_media_count: Option<i32>,
+    #[serde(rename = "slug")]
+    slug: Option<String>,
+    #[serde(rename = "isActive")]
+    is_active: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2284,6 +2348,23 @@ struct KitsuChapterAttributes {
     #[serde(rename = "published")]
     published: Option<String>,
     length: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCategoryResponse {
+    data: Option<KitsuCategoryResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KitsuCategoriesCollectionResponse {
+    #[serde(default)]
+    data: Vec<KitsuCategoryResource>,
+    #[serde(default)]
+    included: Vec<KitsuIncluded>,
+    #[serde(default)]
+    links: KitsuLinks,
 }
 
 #[cfg(test)]
@@ -2928,5 +3009,75 @@ mod tests {
         assert!(attrs.volume_number.is_none());
         assert!(attrs.published.is_none());
         assert!(attrs.length.is_none());
+    }
+
+    #[test]
+    fn kitsu_category_response_deserialize() {
+        let json = r#"{
+            "data": {
+                "id": "42",
+                "type": "categories",
+                "attributes": {
+                    "title": "Action",
+                    "description": "Action anime and manga",
+                    "totalMediaCount": 150,
+                    "slug": "action",
+                    "isActive": true
+                }
+            },
+            "included": []
+        }"#;
+
+        let response: KitsuCategoryResponse = serde_json::from_str(json).expect("parse category response");
+        let category = response.data.expect("data present");
+        assert_eq!(category.id, "42");
+        let attrs = category.attributes;
+        assert_eq!(attrs.title.as_deref(), Some("Action"));
+        assert_eq!(attrs.total_media_count, Some(150));
+        assert_eq!(attrs.slug.as_deref(), Some("action"));
+        assert_eq!(attrs.is_active, Some(true));
+    }
+
+    #[test]
+    fn kitsu_category_response_null_data() {
+        let json = r#"{"data": null, "included": []}"#;
+        let response: KitsuCategoryResponse = serde_json::from_str(json).expect("parse null data");
+        assert!(response.data.is_none());
+    }
+
+    #[test]
+    fn kitsu_categories_collection_pagination() {
+        let json = r#"{
+            "data": [
+                {"id": "1", "type": "categories", "attributes": {"title": "Action"}},
+                {"id": "2", "type": "categories", "attributes": {"title": "Adventure"}}
+            ],
+            "included": [],
+            "links": {"next": "https://kitsu.io/api/edge/categories?page[limit]=2&page[offset]=2"}
+        }"#;
+
+        let response: KitsuCategoriesCollectionResponse = serde_json::from_str(json).expect("parse collection");
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].id, "1");
+        assert_eq!(response.data[1].id, "2");
+        assert!(response.links.next.is_some());
+    }
+
+    #[test]
+    fn kitsu_category_attributes_optional_fields() {
+        let json = r#"{
+            "title": null,
+            "description": null,
+            "totalMediaCount": null,
+            "slug": null,
+            "isActive": null
+        }"#;
+
+        let attrs: KitsuCategoryAttributes = serde_json::from_str(json).expect("parse empty attrs");
+        assert!(attrs.title.is_none());
+        assert!(attrs.description.is_none());
+        assert!(attrs.total_media_count.is_none());
+        assert!(attrs.slug.is_none());
+        assert!(attrs.is_active.is_none());
     }
 }
