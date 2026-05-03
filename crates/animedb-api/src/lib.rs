@@ -638,8 +638,18 @@ async fn playground() -> impl IntoResponse {
     Html(playground_source(GraphQLPlaygroundConfig::new("/graphql")))
 }
 
-async fn healthz() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "ok" }))
+async fn healthz(State(schema): State<AnimeDbSchema>) -> impl IntoResponse {
+    let ok = tokio::task::spawn_blocking(move || {
+        let db = AnimeDb::open(schema.data::<AppState>().unwrap().database_path.as_path())
+            .map_err(|e| e.to_string())?;
+        db.connection().query_row("SELECT 1", [], |_| Ok(()))
+            .map_err(|e| format!("{e}"))
+    })
+    .await
+    .map_err(|e| format!("{e}"))
+    .is_ok();
+
+    Json(serde_json::json!({ "status": if ok { "ok" } else { "error" } }))
 }
 
 fn not_found_is_none<T>(error: animedb::Error) -> GraphQLResult<Option<T>> {
