@@ -76,6 +76,33 @@ impl AniListProvider {
         provider.endpoint = endpoint.into();
         provider
     }
+
+    fn execute_with_retry(&self, payload: &serde_json::Value) -> Result<reqwest::blocking::Response> {
+        let mut retry_count = 0;
+        let mut delay = std::time::Duration::from_secs(2);
+        loop {
+            let req = self.client.post(&self.endpoint).json(payload).build()?;
+            let resp = self.client.execute(req)?;
+            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                if retry_count >= 3 {
+                    return Ok(resp.error_for_status()?);
+                }
+                if let Some(retry_after) = resp.headers().get(reqwest::header::RETRY_AFTER) {
+                    if let Ok(s) = retry_after.to_str() {
+                        if let Ok(secs) = s.parse::<u64>() {
+                            delay = std::time::Duration::from_secs(secs + 1);
+                        }
+                    }
+                }
+                std::thread::sleep(delay);
+                retry_count += 1;
+                delay *= 2;
+                continue;
+            }
+            return Ok(resp.error_for_status()?);
+        }
+    }
+
 }
 
 impl Default for JikanProvider {
@@ -134,6 +161,24 @@ impl KitsuProvider {
         provider.endpoint = endpoint.into();
         provider
     }
+
+    pub fn fetch_trending(&self, media_kind: MediaKind) -> Result<Vec<CanonicalMedia>> {
+        let path = kitsu_trending_path(media_kind);
+
+        let response = self
+            .client
+            .get(format!("{}/{path}", self.endpoint))
+            .header("Accept", "application/vnd.api+json")
+            .send()?
+            .error_for_status()?
+            .json::<KitsuCollectionResponse>()?;
+
+        response
+            .data
+            .iter()
+            .map(|item| map_kitsu_media(item, &response.included, media_kind))
+            .collect()
+    }
 }
 
 impl RemoteProvider for AniListProvider {
@@ -159,12 +204,7 @@ impl RemoteProvider for AniListProvider {
             }
         });
 
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .json(&payload)
-            .send()?
-            .error_for_status()?
+        let response = self.execute_with_retry(&payload)?
             .json::<AniListGraphQlResponse>()?;
 
         if !response.errors.is_empty() {
@@ -216,12 +256,7 @@ impl RemoteProvider for AniListProvider {
             }
         });
 
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .json(&payload)
-            .send()?
-            .error_for_status()?
+        let response = self.execute_with_retry(&payload)?
             .json::<AniListGraphQlResponse>()?;
 
         if !response.errors.is_empty() {
@@ -272,12 +307,7 @@ impl RemoteProvider for AniListProvider {
             }
         });
 
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .json(&payload)
-            .send()?
-            .error_for_status()?
+        let response = self.execute_with_retry(&payload)?
             .json::<AniListSingleMediaResponse>()?;
 
         if !response.errors.is_empty() {
@@ -789,6 +819,13 @@ fn kitsu_kind_path(kind: MediaKind) -> &'static str {
     match kind {
         MediaKind::Anime | MediaKind::Show => "anime",
         MediaKind::Manga | MediaKind::Movie => "manga",
+    }
+}
+
+fn kitsu_trending_path(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Anime | MediaKind::Show => "trending/anime",
+        MediaKind::Manga | MediaKind::Movie => "trending/manga",
     }
 }
 
@@ -2525,5 +2562,21 @@ mod tests {
             assert_eq!(source.as_str(), s);
             assert_eq!(source.to_string(), s);
         }
+    }
+
+    #[test]
+    fn kitsu_trending_path_choices() {
+        assert_eq!(kitsu_trending_path(MediaKind::Anime), "trending/anime");
+        assert_eq!(kitsu_trending_path(MediaKind::Show), "trending/anime");
+        assert_eq!(kitsu_trending_path(MediaKind::Manga), "trending/manga");
+        assert_eq!(kitsu_trending_path(MediaKind::Movie), "trending/manga");
+    }
+
+    #[test]
+    fn kitsu_kind_path_choices() {
+        assert_eq!(kitsu_kind_path(MediaKind::Anime), "anime");
+        assert_eq!(kitsu_kind_path(MediaKind::Show), "anime");
+        assert_eq!(kitsu_kind_path(MediaKind::Manga), "manga");
+        assert_eq!(kitsu_kind_path(MediaKind::Movie), "manga");
     }
 }
