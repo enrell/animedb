@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error as StdError;
@@ -8,9 +8,9 @@ use std::thread;
 use crate::error::{Error, Result};
 use crate::merge::{score_boolean, score_cover_image, score_optional_i32, score_text_field};
 use crate::model::{
-    CanonicalMedia, ExternalId, FieldProvenance, MediaKind, PersistedSyncState, SearchHit,
-    SearchOptions, SourceName, SourcePayload, StoredMedia, SyncCursor, SyncMode, SyncOutcome,
-    SyncReport, SyncRequest,
+    CanonicalEpisode, CanonicalMedia, ExternalId, FieldProvenance, MediaDocument, MediaKind,
+    PersistedSyncState, SearchHit, SearchOptions, SourceName, SourcePayload, StoredEpisode,
+    StoredMedia, SyncCursor, SyncMode, SyncOutcome, SyncReport, SyncRequest,
 };
 use crate::provider::{
     AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, Provider, TvmazeProvider,
@@ -658,7 +658,7 @@ impl AnimeDb {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
 
-        if version >= 4 {
+        if version >= 5 {
             return Ok(());
         }
 
@@ -1005,6 +1005,44 @@ impl AnimeDb {
             )?;
         }
 
+        if version < 5 {
+            self.conn.execute_batch(
+                r#"
+                BEGIN;
+
+                CREATE TABLE IF NOT EXISTS episode (
+                    id INTEGER PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
+                    season_number INTEGER,
+                    episode_number INTEGER,
+                    absolute_number INTEGER,
+                    title_display TEXT,
+                    title_original TEXT,
+                    synopsis TEXT,
+                    air_date TEXT,
+                    runtime_minutes INTEGER,
+                    thumbnail_url TEXT,
+                    raw_titles_json TEXT CHECK(raw_titles_json IS NULL OR json_valid(raw_titles_json)),
+                    raw_json TEXT CHECK(raw_json IS NULL OR json_valid(raw_json)),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(source, media_kind, source_id, media_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS episode_media_id_idx ON episode(media_id);
+                CREATE INDEX IF NOT EXISTS episode_source_idx ON episode(source);
+                CREATE INDEX IF NOT EXISTS episode_absolute_number_idx ON episode(media_id, absolute_number);
+                CREATE INDEX IF NOT EXISTS episode_season_episode_idx ON episode(media_id, season_number, episode_number);
+
+                PRAGMA user_version = 5;
+                COMMIT;
+                "#,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1086,6 +1124,171 @@ impl AnimeDb {
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Error::from)
+    }
+
+    pub fn upsert_episode(&mut self, episode: &CanonicalEpisode, media_id: i64) -> Result<i64> {
+        let raw_titles_json = episode
+            .raw_titles_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+        let raw_json = episode
+            .raw_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+
+        self.conn.execute(
+            r#"
+            INSERT INTO episode (
+                source, source_id, media_id, media_kind,
+                season_number, episode_number, absolute_number,
+                title_display, title_original, synopsis,
+                air_date, runtime_minutes, thumbnail_url,
+                raw_titles_json, raw_json,
+                updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+            ON CONFLICT(source, media_kind, source_id, media_id) DO UPDATE SET
+                season_number = excluded.season_number,
+                episode_number = excluded.episode_number,
+                absolute_number = excluded.absolute_number,
+                title_display = excluded.title_display,
+                title_original = excluded.title_original,
+                synopsis = excluded.synopsis,
+                air_date = excluded.air_date,
+                runtime_minutes = excluded.runtime_minutes,
+                thumbnail_url = excluded.thumbnail_url,
+                raw_titles_json = excluded.raw_titles_json,
+                raw_json = excluded.raw_json,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+            params![
+                episode.source.as_str(),
+                episode.source_id,
+                media_id,
+                episode.media_kind.as_str(),
+                episode.season_number,
+                episode.episode_number,
+                episode.absolute_number,
+                episode.title_display,
+                episode.title_original,
+                episode.synopsis,
+                episode.air_date,
+                episode.runtime_minutes,
+                episode.thumbnail_url,
+                raw_titles_json,
+                raw_json,
+            ],
+        )?;
+
+        let id = self.conn.last_insert_rowid();
+        Ok(id)
+    }
+
+    pub fn episodes_for_media(&self, media_id: i64) -> Result<Vec<StoredEpisode>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, source, source_id, media_id, media_kind,
+                season_number, episode_number, absolute_number,
+                title_display, title_original, synopsis,
+                air_date, runtime_minutes, thumbnail_url,
+                raw_titles_json, raw_json
+            FROM episode
+            WHERE media_id = ?1
+            ORDER BY
+                COALESCE(season_number, 0),
+                COALESCE(episode_number, 0),
+                COALESCE(absolute_number, 0)
+            "#,
+        )?;
+        let rows = stmt.query_map(params![media_id], parse_stored_episode)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
+    }
+
+    pub fn episode_by_absolute_number(
+        &self,
+        media_id: i64,
+        absolute_number: i32,
+    ) -> Result<StoredEpisode> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT
+                    id, source, source_id, media_id, media_kind,
+                    season_number, episode_number, absolute_number,
+                    title_display, title_original, synopsis,
+                    air_date, runtime_minutes, thumbnail_url,
+                    raw_titles_json, raw_json
+                FROM episode
+                WHERE media_id = ?1 AND absolute_number = ?2
+                "#,
+                params![media_id, absolute_number],
+                parse_stored_episode,
+            )
+            .optional()?
+            .ok_or(Error::NotFound)
+    }
+
+    pub fn episode_by_season_episode(
+        &self,
+        media_id: i64,
+        season_number: i32,
+        episode_number: i32,
+    ) -> Result<StoredEpisode> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT
+                    id, source, source_id, media_id, media_kind,
+                    season_number, episode_number, absolute_number,
+                    title_display, title_original, synopsis,
+                    air_date, runtime_minutes, thumbnail_url,
+                    raw_titles_json, raw_json
+                FROM episode
+                WHERE media_id = ?1 AND season_number = ?2 AND episode_number = ?3
+                "#,
+                params![media_id, season_number, episode_number],
+                parse_stored_episode,
+            )
+            .optional()?
+            .ok_or(Error::NotFound)
+    }
+
+    pub fn fetch_and_store_episodes(
+        &mut self,
+        provider: &dyn Provider,
+        source: SourceName,
+        source_id: &str,
+    ) -> Result<Vec<StoredEpisode>> {
+        let media = self
+            .get_by_external_id_and_kind(source, MediaKind::Anime, source_id)
+            .or_else(|_| self.get_by_external_id_and_kind(source, MediaKind::Show, source_id))?;
+
+        let episodes = provider.fetch_episodes(media.media_kind, source_id)?;
+
+        for episode in &episodes {
+            self.upsert_episode(episode, media.id)?;
+        }
+
+        self.episodes_for_media(media.id)
+    }
+
+    pub fn media_document_by_id(&self, media_id: i64) -> Result<MediaDocument> {
+        let media = self.get_media(media_id)?;
+        let episodes = self.episodes_for_media(media_id)?;
+        Ok(MediaDocument { media, episodes })
+    }
+
+    pub fn media_document_by_external_id(
+        &self,
+        source: SourceName,
+        source_id: &str,
+    ) -> Result<MediaDocument> {
+        let media = self.get_by_external_id(source, source_id)?;
+        let episodes = self.episodes_for_media(media.id)?;
+        Ok(MediaDocument { media, episodes })
     }
 }
 
@@ -2117,6 +2320,42 @@ fn parse_source(value: &str) -> Result<SourceName> {
     value.parse()
 }
 
+fn parse_stored_episode(
+    row: &rusqlite::Row<'_>,
+) -> std::result::Result<StoredEpisode, rusqlite::Error> {
+    let source =
+        parse_source(row.get_ref(1)?.as_str()?).map_err(|err| rusqlite_decode_error(1, err))?;
+    let media_kind =
+        parse_media_kind(row.get_ref(4)?.as_str()?).map_err(|err| rusqlite_decode_error(4, err))?;
+    let raw_titles_json = row
+        .get::<_, Option<String>>(14)?
+        .map(|value| serde_json::from_str::<Value>(&value).ok())
+        .flatten();
+    let raw_json = row
+        .get::<_, Option<String>>(15)?
+        .map(|value| serde_json::from_str::<Value>(&value).ok())
+        .flatten();
+
+    Ok(StoredEpisode {
+        id: row.get(0)?,
+        source,
+        source_id: row.get(2)?,
+        media_id: row.get(3)?,
+        media_kind,
+        season_number: row.get(5)?,
+        episode_number: row.get(6)?,
+        absolute_number: row.get(7)?,
+        title_display: row.get(8)?,
+        title_original: row.get(9)?,
+        synopsis: row.get(10)?,
+        air_date: row.get(11)?,
+        runtime_minutes: row.get(12)?,
+        thumbnail_url: row.get(13)?,
+        raw_titles_json,
+        raw_json,
+    })
+}
+
 fn normalize_aliases(aliases: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     for alias in aliases {
@@ -2381,14 +2620,18 @@ mod tests {
         assert_eq!(loaded.media_kind, MediaKind::Show);
         assert_eq!(loaded.title_display, "Breaking Bad");
         assert_eq!(loaded.season_year, Some(2008));
-        assert!(loaded
-            .external_ids
-            .iter()
-            .any(|id| id.source == SourceName::Tvmaze));
-        assert!(loaded
-            .external_ids
-            .iter()
-            .any(|id| id.source == SourceName::Imdb));
+        assert!(
+            loaded
+                .external_ids
+                .iter()
+                .any(|id| id.source == SourceName::Tvmaze)
+        );
+        assert!(
+            loaded
+                .external_ids
+                .iter()
+                .any(|id| id.source == SourceName::Imdb)
+        );
     }
 
     #[test]
@@ -2637,14 +2880,18 @@ mod tests {
 
         assert_eq!(loaded.title_display, "Breaking Bad");
         assert_eq!(loaded.media_kind, MediaKind::Show);
-        assert!(loaded
-            .external_ids
-            .iter()
-            .any(|id| id.source == SourceName::Tvmaze));
-        assert!(loaded
-            .external_ids
-            .iter()
-            .any(|id| id.source == SourceName::Imdb));
+        assert!(
+            loaded
+                .external_ids
+                .iter()
+                .any(|id| id.source == SourceName::Tvmaze)
+        );
+        assert!(
+            loaded
+                .external_ids
+                .iter()
+                .any(|id| id.source == SourceName::Imdb)
+        );
         assert!(loaded.genres.contains(&"Drama".to_string()));
         assert!(loaded.genres.contains(&"Crime".to_string()));
     }
@@ -3043,5 +3290,315 @@ mod tests {
             }],
             field_provenance: Vec::new(),
         }
+    }
+
+    fn sample_episode() -> CanonicalEpisode {
+        CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep1".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(1),
+            absolute_number: Some(1),
+            title_display: Some("The Hospital".into()),
+            title_original: Some("Byouin".into()),
+            synopsis: Some("Tenma operates on a young boy.".into()),
+            air_date: Some("2005-04-05".into()),
+            runtime_minutes: Some(23),
+            thumbnail_url: Some("https://cdn.kitsu.io/ep1_thumb.jpg".into()),
+            raw_titles_json: Some(serde_json::json!({"en": "The Hospital", "ja_jp": "Byouin"})),
+            raw_json: None,
+        }
+    }
+
+    #[test]
+    fn upsert_episode_and_retrieve_by_media() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let media = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "Monster".into(),
+            ..minimal_media(SourceName::Kitsu, "1")
+        };
+        let media_id = db.upsert_media(&media).expect("upsert media");
+
+        let episode = CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep1".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(1),
+            absolute_number: Some(1),
+            title_display: Some("The Hospital".into()),
+            title_original: Some("Byouin".into()),
+            synopsis: Some("Tenma operates on a young boy.".into()),
+            air_date: Some("2005-04-05".into()),
+            runtime_minutes: Some(23),
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        };
+
+        let ep_id = db
+            .upsert_episode(&episode, media_id)
+            .expect("upsert episode");
+        assert!(ep_id > 0);
+
+        let episodes = db.episodes_for_media(media_id).expect("list episodes");
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].source_id, "ep1");
+        assert_eq!(episodes[0].episode_number, Some(1));
+        assert_eq!(episodes[0].title_display.as_deref(), Some("The Hospital"));
+    }
+
+    #[test]
+    fn upsert_episode_replaces_existing() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let media = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "Monster".into(),
+            ..minimal_media(SourceName::Kitsu, "1")
+        };
+        let media_id = db.upsert_media(&media).expect("upsert media");
+
+        let episode1 = CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep1".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(1),
+            absolute_number: Some(1),
+            title_display: Some("Original Title".into()),
+            title_original: None,
+            synopsis: None,
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        };
+
+        db.upsert_episode(&episode1, media_id)
+            .expect("upsert first");
+
+        let episode2 = CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep1".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(1),
+            absolute_number: Some(1),
+            title_display: Some("Updated Title".into()),
+            title_original: None,
+            synopsis: Some("Updated synopsis.".into()),
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        };
+
+        db.upsert_episode(&episode2, media_id)
+            .expect("upsert second");
+
+        let episodes = db.episodes_for_media(media_id).expect("list episodes");
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].title_display.as_deref(), Some("Updated Title"));
+        assert_eq!(episodes[0].synopsis.as_deref(), Some("Updated synopsis."));
+    }
+
+    #[test]
+    fn episode_by_absolute_number() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let media = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "Monster".into(),
+            ..minimal_media(SourceName::Kitsu, "1")
+        };
+        let media_id = db.upsert_media(&media).expect("upsert media");
+
+        let ep1 = CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep1".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(1),
+            absolute_number: Some(1),
+            title_display: Some("Episode 1".into()),
+            title_original: None,
+            synopsis: None,
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        };
+
+        let ep2 = CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep2".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(2),
+            absolute_number: Some(2),
+            title_display: Some("Episode 2".into()),
+            title_original: None,
+            synopsis: None,
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        };
+
+        db.upsert_episode(&ep1, media_id).expect("upsert ep1");
+        db.upsert_episode(&ep2, media_id).expect("upsert ep2");
+
+        let found = db
+            .episode_by_absolute_number(media_id, 2)
+            .expect("find by absolute");
+        assert_eq!(found.episode_number, Some(2));
+
+        let not_found = db.episode_by_absolute_number(media_id, 99);
+        assert!(not_found.is_err());
+    }
+
+    #[test]
+    fn episode_by_season_episode() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let media = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "Monster".into(),
+            ..minimal_media(SourceName::Kitsu, "1")
+        };
+        let media_id = db.upsert_media(&media).expect("upsert media");
+
+        let ep = CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep1s1".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(5),
+            absolute_number: Some(5),
+            title_display: Some("Season 1 Episode 5".into()),
+            title_original: None,
+            synopsis: None,
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        };
+
+        db.upsert_episode(&ep, media_id).expect("upsert");
+
+        let found = db
+            .episode_by_season_episode(media_id, 1, 5)
+            .expect("find by season/episode");
+        assert_eq!(found.season_number, Some(1));
+        assert_eq!(found.episode_number, Some(5));
+    }
+
+    #[test]
+    fn media_document_by_id_returns_media_and_episodes() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let media = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "Monster".into(),
+            episodes: Some(74),
+            ..minimal_media(SourceName::Kitsu, "1")
+        };
+        let media_id = db.upsert_media(&media).expect("upsert media");
+
+        let ep1 = CanonicalEpisode {
+            source: SourceName::Kitsu,
+            source_id: "ep1".into(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(1),
+            absolute_number: Some(1),
+            title_display: Some("First Episode".into()),
+            title_original: None,
+            synopsis: None,
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        };
+
+        db.upsert_episode(&ep1, media_id).expect("upsert ep");
+
+        let doc = db.media_document_by_id(media_id).expect("get doc");
+        assert_eq!(doc.media.title_display, "Monster");
+        assert_eq!(doc.media.episodes, Some(74));
+        assert_eq!(doc.episodes.len(), 1);
+        assert_eq!(
+            doc.episodes[0].title_display.as_deref(),
+            Some("First Episode")
+        );
+    }
+
+    #[test]
+    fn media_document_by_external_id() {
+        let mut db = AnimeDb::open_in_memory().expect("in-memory db");
+
+        let media = CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: "Monster".into(),
+            ..minimal_media(SourceName::Kitsu, "1")
+        };
+        db.upsert_media(&media).expect("upsert media");
+
+        let doc = db
+            .media_document_by_external_id(SourceName::Kitsu, "1")
+            .expect("get doc by external id");
+        assert_eq!(doc.media.title_display, "Monster");
+        assert!(doc.episodes.is_empty());
+    }
+
+    #[test]
+    fn provider_without_episode_support_returns_error() {
+        use crate::provider::Provider;
+
+        // AniList does not implement fetch_episodes, so it returns a controlled error
+        let anilist = AniListProvider::new();
+        let result = anilist.fetch_episodes(MediaKind::Anime, "1");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("does not support episode metadata"),
+            "got: {err_msg}"
+        );
+
+        // Jikan does not implement fetch_episodes
+        let jikan = JikanProvider::new();
+        let result = jikan.fetch_episodes(MediaKind::Anime, "1");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("does not support episode metadata"),
+            "got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn kitsu_provider_does_implement_fetch_episodes() {
+        use crate::provider::Provider;
+
+        // Kitsu DOES implement fetch_episodes, but gets a 404 for non-existent anime
+        // which proves the method is implemented (not "not supported")
+        let kitsu = KitsuProvider::new();
+        let result = kitsu.fetch_episodes(MediaKind::Anime, "99999");
+        // 404 is expected for non-existent anime ID; what matters is it's NOT
+        // "does not support episode metadata" error
+        assert!(
+            result.is_err() && !result.unwrap_err().to_string().contains("does not support"),
+            "Kitsu should implement fetch_episodes (got network/404 error, not unsupported)"
+        );
     }
 }

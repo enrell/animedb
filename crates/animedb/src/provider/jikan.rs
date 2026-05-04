@@ -87,7 +87,9 @@ impl Provider for JikanProvider {
             .pagination
             .and_then(|p| p.has_next_page)
             .unwrap_or(false)
-            .then_some(SyncCursor { page: cursor.page + 1 });
+            .then_some(SyncCursor {
+                page: cursor.page + 1,
+            });
 
         Ok(FetchPage { items, next_cursor })
     }
@@ -121,12 +123,7 @@ impl Provider for JikanProvider {
             .collect::<Result<Vec<_>>>()?;
 
         if let Some(fmt) = options.format {
-            items.retain(|m| {
-                m.format
-                    .as_ref()
-                    .map(|v| v.eq_ignore_ascii_case(&fmt))
-                    == Some(true)
-            });
+            items.retain(|m| m.format.as_ref().map(|v| v.eq_ignore_ascii_case(&fmt)) == Some(true));
         }
 
         Ok(items)
@@ -138,10 +135,7 @@ impl Provider for JikanProvider {
             .map_err(|_| Error::Validation(format!("invalid Jikan/MAL id: {source_id}")))?;
 
         let path = kind_path(media_kind);
-        let resp = self
-            .client
-            .get(&format!("/{path}/{mal_id}"))
-            .send()?;
+        let resp = self.client.get(&format!("/{path}/{mal_id}")).send()?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -197,11 +191,7 @@ impl Provider for JikanProvider {
             .collect())
     }
 
-    fn fetch_related(
-        &self,
-        media_kind: MediaKind,
-        source_id: &str,
-    ) -> Result<Vec<CanonicalMedia>> {
+    fn fetch_related(&self, media_kind: MediaKind, source_id: &str) -> Result<Vec<CanonicalMedia>> {
         let mal_id: i64 = source_id
             .parse()
             .map_err(|_| Error::Validation(format!("invalid Jikan/MAL id: {source_id}")))?;
@@ -257,11 +247,7 @@ fn into_canonical(item: Media, kind: MediaKind) -> Result<CanonicalMedia> {
             Error::Validation(format!("Jikan media {} has no usable title", item.mal_id))
         })?;
 
-    let mut aliases: Vec<String> = item
-        .titles
-        .iter()
-        .filter_map(|t| t.title.clone())
-        .collect();
+    let mut aliases: Vec<String> = item.titles.iter().filter_map(|t| t.title.clone()).collect();
     aliases.extend(item.title_synonyms.clone());
     if let Some(t) = item.title.clone() {
         aliases.push(t);

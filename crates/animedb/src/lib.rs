@@ -39,8 +39,8 @@ mod remote;
 
 pub use error::{Error, Result};
 pub use model::{
-    CanonicalMedia, ExternalId, FieldProvenance, MediaKind, SearchHit, SearchOptions,
-    SourceName, SourcePayload, StoredMedia,
+    CanonicalEpisode, CanonicalMedia, ExternalId, FieldProvenance, MediaDocument, MediaKind,
+    SearchHit, SearchOptions, SourceName, SourcePayload, StoredEpisode, StoredMedia,
 };
 
 // Provider trait and concrete provider structs.
@@ -52,7 +52,7 @@ pub use provider::{
 pub use remote::{RemoteApi, RemoteCollection, RemoteSource};
 
 // Re-export sync-related types — they are pure data, no SQLite needed.
-pub use model::{SyncCursor, SyncMode, SyncRequest, SyncOutcome, SyncReport, PersistedSyncState};
+pub use model::{PersistedSyncState, SyncCursor, SyncMode, SyncOutcome, SyncReport, SyncRequest};
 
 // ---------------------------------------------------------------------------
 // local-db only: requires rusqlite

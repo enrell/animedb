@@ -191,12 +191,7 @@ impl RemoteCollection {
             self.options
                 .format
                 .as_ref()
-                .map(|fmt| {
-                    m.format
-                        .as_ref()
-                        .map(|v| v.eq_ignore_ascii_case(fmt))
-                        == Some(true)
-                })
+                .map(|fmt| m.format.as_ref().map(|v| v.eq_ignore_ascii_case(fmt)) == Some(true))
                 .unwrap_or(true)
         }))
     }

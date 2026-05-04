@@ -85,7 +85,9 @@ impl Provider for TvmazeProvider {
         }
 
         let items = shows.into_iter().filter_map(into_canonical).collect();
-        let next_cursor = Some(SyncCursor { page: cursor.page + 1 });
+        let next_cursor = Some(SyncCursor {
+            page: cursor.page + 1,
+        });
 
         Ok(FetchPage { items, next_cursor })
     }
@@ -105,7 +107,10 @@ impl Provider for TvmazeProvider {
             .error_for_status()?
             .json()?;
 
-        Ok(results.into_iter().filter_map(|r| into_canonical(r.show)).collect())
+        Ok(results
+            .into_iter()
+            .filter_map(|r| into_canonical(r.show))
+            .collect())
     }
 
     fn get_by_id(&self, _media_kind: MediaKind, source_id: &str) -> Result<Option<CanonicalMedia>> {

@@ -107,6 +107,9 @@ Main public types re-exported by the crate:
 - `RemoteSource`
 - `CanonicalMedia`
 - `StoredMedia`
+- `CanonicalEpisode`
+- `StoredEpisode`
+- `MediaDocument`
 - `SearchOptions`
 - `SearchHit`
 - `SyncRequest`
@@ -129,6 +132,39 @@ Current logical tables:
 - `field_provenance`: winner-by-field audit trail for merge decisions
 - `sync_state`: persisted sync cursors and checkpoints
 - `media_fts`: `FTS5` virtual table for title, alias, and synopsis search
+- `episode`: episode metadata for anime and shows (season/episode numbers, titles, synopsis, air date, runtime, thumbnail)
+
+### Episodes
+
+Episode metadata can be fetched and stored for anime and shows. Only `KitsuProvider` currently implements `fetch_episodes`; other providers return a "not supported" error.
+
+```rust
+use animedb::{AnimeDb, SourceName, KitsuProvider, Provider};
+
+let mut db = AnimeDb::open("/tmp/animedb.sqlite")?;
+
+// The media must already exist in the local catalog
+let doc = db.media_document_by_external_id(SourceName::Kitsu, "1")?;
+
+// Fetch episodes from Kitsu and persist them
+db.fetch_and_store_episodes(&KitsuProvider::new(), SourceName::Kitsu, "1")?;
+
+// Query episodes by media
+let episodes = db.episodes_for_media(doc.media.id)?;
+
+// Or find specific episodes
+let ep5 = db.episode_by_absolute_number(doc.media.id, 5)?;
+let ep_s1_e3 = db.episode_by_season_episode(doc.media.id, 1, 3)?;
+```
+
+`MediaDocument` bundles a `StoredMedia` with its `Vec<StoredEpisode>`:
+
+```rust
+let doc = db.media_document_by_id(media_id)?;
+for ep in doc.episodes {
+    println!("{} - {}", ep.absolute_number.unwrap_or(0), ep.title_display);
+}
+```
 
 SQLite configuration applied by the crate:
 
@@ -173,6 +209,9 @@ pub trait Provider: Send + Sync {
 
     /// Fetches related media (sequels, prequels, spin-offs, etc.) for a given media item.
     fn fetch_related(&self, media_kind: MediaKind, source_id: &str) -> Result<Vec<CanonicalMedia>> { ... }
+
+    /// Fetches episode metadata for a given media item.
+    fn fetch_episodes(&self, media_kind: MediaKind, source_id: &str) -> Result<Vec<CanonicalEpisode>> { ... }
 }
 ```
 

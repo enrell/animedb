@@ -103,10 +103,9 @@ impl Provider for AniListProvider {
             .map(|m| into_canonical(m, kind))
             .collect::<Result<Vec<_>>>()?;
 
-        let next_cursor = page
-            .page_info
-            .has_next_page
-            .then_some(SyncCursor { page: cursor.page + 1 });
+        let next_cursor = page.page_info.has_next_page.then_some(SyncCursor {
+            page: cursor.page + 1,
+        });
 
         Ok(FetchPage { items, next_cursor })
     }
@@ -148,12 +147,7 @@ impl Provider for AniListProvider {
             .collect::<Result<Vec<_>>>()?;
 
         if let Some(fmt) = options.format {
-            items.retain(|m| {
-                m.format
-                    .as_ref()
-                    .map(|v| v.eq_ignore_ascii_case(&fmt))
-                    == Some(true)
-            });
+            items.retain(|m| m.format.as_ref().map(|v| v.eq_ignore_ascii_case(&fmt)) == Some(true));
         }
 
         Ok(items)
@@ -239,9 +233,15 @@ impl Provider for AniListProvider {
 
         check_errors(&resp.errors)?;
 
-        let Some(data) = resp.data else { return Ok(Vec::new()) };
-        let Some(media) = data.media else { return Ok(Vec::new()) };
-        let Some(recs) = media.recommendations else { return Ok(Vec::new()) };
+        let Some(data) = resp.data else {
+            return Ok(Vec::new());
+        };
+        let Some(media) = data.media else {
+            return Ok(Vec::new());
+        };
+        let Some(recs) = media.recommendations else {
+            return Ok(Vec::new());
+        };
 
         recs.nodes
             .into_iter()
@@ -250,11 +250,7 @@ impl Provider for AniListProvider {
             .collect()
     }
 
-    fn fetch_related(
-        &self,
-        media_kind: MediaKind,
-        source_id: &str,
-    ) -> Result<Vec<CanonicalMedia>> {
+    fn fetch_related(&self, media_kind: MediaKind, source_id: &str) -> Result<Vec<CanonicalMedia>> {
         let media_id: i64 = source_id
             .parse()
             .map_err(|_| Error::Validation(format!("invalid AniList id: {source_id}")))?;
@@ -273,9 +269,15 @@ impl Provider for AniListProvider {
 
         check_errors(&resp.errors)?;
 
-        let Some(data) = resp.data else { return Ok(Vec::new()) };
-        let Some(media) = data.media else { return Ok(Vec::new()) };
-        let Some(rels) = media.relations else { return Ok(Vec::new()) };
+        let Some(data) = resp.data else {
+            return Ok(Vec::new());
+        };
+        let Some(media) = data.media else {
+            return Ok(Vec::new());
+        };
+        let Some(rels) = media.relations else {
+            return Ok(Vec::new());
+        };
 
         rels.edges
             .into_iter()
@@ -357,9 +359,7 @@ fn into_canonical(item: Media, kind: MediaKind) -> Result<CanonicalMedia> {
                 .or_else(|| c.medium.clone())
         }),
         banner_image: item.banner_image,
-        provider_rating: item
-            .average_score
-            .map(|s| (s / 100.0).clamp(0.0, 1.0)),
+        provider_rating: item.average_score.map(|s| (s / 100.0).clamp(0.0, 1.0)),
         nsfw: item.is_adult.unwrap_or(false),
         aliases: item.synonyms,
         genres: item.genres,

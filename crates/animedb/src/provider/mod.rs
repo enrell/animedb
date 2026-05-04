@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::model::{
-    CanonicalMedia, MediaKind, SearchOptions, SourceName, SyncCursor, SyncRequest,
+    CanonicalEpisode, CanonicalMedia, MediaKind, SearchOptions, SourceName, SyncCursor, SyncRequest,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,18 @@ pub trait Provider: Send + Sync {
     ) -> Result<Vec<CanonicalMedia>> {
         Err(Error::Validation(format!(
             "{} does not support relations",
+            self.source()
+        )))
+    }
+
+    /// Fetches episode metadata for a given media item.
+    fn fetch_episodes(
+        &self,
+        _media_kind: MediaKind,
+        _source_id: &str,
+    ) -> Result<Vec<CanonicalEpisode>> {
+        Err(Error::Validation(format!(
+            "{} does not support episode metadata",
             self.source()
         )))
     }

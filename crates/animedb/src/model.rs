@@ -358,3 +358,54 @@ pub struct PersistedSyncState {
     pub last_page: Option<i64>,
     pub mode: SyncMode,
 }
+
+// ---------------------------------------------------------------------------
+// Episode types
+// ---------------------------------------------------------------------------
+
+/// Canonical episode data from a provider, used for sync/upsert.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CanonicalEpisode {
+    pub source: SourceName,
+    pub source_id: String,
+    pub media_kind: MediaKind,
+    pub season_number: Option<i32>,
+    pub episode_number: Option<i32>,
+    pub absolute_number: Option<i32>,
+    pub title_display: Option<String>,
+    pub title_original: Option<String>,
+    pub synopsis: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime_minutes: Option<i32>,
+    pub thumbnail_url: Option<String>,
+    pub raw_titles_json: Option<Value>,
+    pub raw_json: Option<Value>,
+}
+
+/// Stored episode data persisted in SQLite.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StoredEpisode {
+    pub id: i64,
+    pub source: SourceName,
+    pub source_id: String,
+    pub media_id: i64,
+    pub media_kind: MediaKind,
+    pub season_number: Option<i32>,
+    pub episode_number: Option<i32>,
+    pub absolute_number: Option<i32>,
+    pub title_display: Option<String>,
+    pub title_original: Option<String>,
+    pub synopsis: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime_minutes: Option<i32>,
+    pub thumbnail_url: Option<String>,
+    pub raw_titles_json: Option<Value>,
+    pub raw_json: Option<Value>,
+}
+
+/// A media record paired with its enriched episode list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaDocument {
+    pub media: StoredMedia,
+    pub episodes: Vec<StoredEpisode>,
+}

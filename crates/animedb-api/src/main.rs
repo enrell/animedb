@@ -3,10 +3,10 @@ use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let database_path = env::var("ANIMEDB_DATABASE_PATH")
-        .unwrap_or_else(|_| "/data/animedb.sqlite".to_string());
-    let listen_addr = env::var("ANIMEDB_LISTEN_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let database_path =
+        env::var("ANIMEDB_DATABASE_PATH").unwrap_or_else(|_| "/data/animedb.sqlite".to_string());
+    let listen_addr =
+        env::var("ANIMEDB_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
 
     let db_path = std::path::Path::new(&database_path);
     if let Some(parent) = db_path.parent() {
@@ -29,7 +29,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|e| format!("join error: {e}"))??;
 
     eprintln!("animedb API starting");
-    eprintln!("  database: {} (schema v{})", database_path, migration_version);
+    eprintln!(
+        "  database: {} (schema v{})",
+        database_path, migration_version
+    );
     eprintln!("  listening on {}", listen_addr);
 
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;

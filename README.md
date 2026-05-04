@@ -125,6 +125,36 @@ The SQLite catalog is created and migrated by the crate itself. The current sche
 - `field_provenance` — winner-per-field audit trail for canonical merge decisions
 - `sync_state` — persisted sync checkpoints/cursors
 - `media_fts` — `FTS5` index for title, alias and synopsis search
+- `episode` — episode metadata for anime and shows
+
+### Episodes
+
+The `episode` table stores enriched episode data fetched from providers. Key fields:
+
+- `season_number`, `episode_number`, `absolute_number` — episode numbering
+- `title_display`, `title_original` — localized titles
+- `synopsis`, `air_date`, `runtime_minutes`, `thumbnail_url` — metadata
+
+Query episodes for a media record:
+
+```rust
+use animedb::{AnimeDb, SourceName};
+
+let mut db = AnimeDb::open("/tmp/animedb.sqlite")?;
+
+// Fetch and store episodes from Kitsu for an anime already in the catalog
+db.fetch_and_store_episodes(&KitsuProvider::new(), SourceName::Kitsu, "1")?;
+
+// Retrieve the media document with its episode list
+let doc = db.media_document_by_external_id(SourceName::Kitsu, "1")?;
+println!("{} has {} episodes", doc.media.title_display, doc.episodes.len());
+
+for episode in doc.episodes {
+    println!("  {:3} - {}", episode.absolute_number.unwrap_or(0), episode.title_display.as_deref().unwrap_or("(no title)"));
+}
+```
+
+Note: `media.episodes` is the total episode count from provider metadata. `MediaDocument.episodes` is the enriched list of persisted episode records fetched from a specific provider.
 
 The connection is configured with:
 

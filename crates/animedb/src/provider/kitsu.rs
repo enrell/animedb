@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::model::{
-    CanonicalMedia, ExternalId, MediaKind, SearchOptions, SourceName, SourcePayload, SyncCursor,
-    SyncRequest,
+    CanonicalEpisode, CanonicalMedia, ExternalId, MediaKind, SearchOptions, SourceName,
+    SourcePayload, SyncCursor, SyncRequest,
 };
 
 use super::http::{HttpClient, clamp_page_size, page_to_offset};
@@ -55,7 +55,6 @@ impl KitsuProvider {
                 .with_base_url(endpoint),
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +96,9 @@ impl Provider for KitsuProvider {
             .map(|r| into_canonical(r, &resp.included, kind))
             .collect::<Result<Vec<_>>>()?;
 
-        let next_cursor = resp
-            .links
-            .next
-            .is_some()
-            .then_some(SyncCursor { page: cursor.page + 1 });
+        let next_cursor = resp.links.next.is_some().then_some(SyncCursor {
+            page: cursor.page + 1,
+        });
 
         Ok(FetchPage { items, next_cursor })
     }
@@ -137,12 +134,7 @@ impl Provider for KitsuProvider {
             .collect::<Result<Vec<_>>>()?;
 
         if let Some(fmt) = options.format {
-            items.retain(|m| {
-                m.format
-                    .as_ref()
-                    .map(|v| v.eq_ignore_ascii_case(&fmt))
-                    == Some(true)
-            });
+            items.retain(|m| m.format.as_ref().map(|v| v.eq_ignore_ascii_case(&fmt)) == Some(true));
         }
 
         Ok(items)
@@ -181,6 +173,27 @@ impl Provider for KitsuProvider {
         resp.data
             .iter()
             .map(|r| into_canonical(r, &resp.included, kind))
+            .collect()
+    }
+
+    fn fetch_episodes(
+        &self,
+        media_kind: MediaKind,
+        source_id: &str,
+    ) -> Result<Vec<CanonicalEpisode>> {
+        let path = format!("{}/{}/episodes", kind_path(media_kind), source_id);
+        let resp: EpisodeCollectionResponse = self
+            .client
+            .get(&format!("/{path}"))
+            .header("Accept", "application/vnd.api+json")
+            .query(&[("page[limit]", "20")])
+            .send()?
+            .error_for_status()?
+            .json()?;
+
+        resp.data
+            .iter()
+            .map(|r| into_episode(r, media_kind))
             .collect()
     }
 }
@@ -233,7 +246,10 @@ fn into_canonical(
 
     // Build alias list from all title variants.
     let mut aliases = attrs.abbreviated_titles.clone();
-    for title in [&attrs.titles.en, &attrs.titles.en_jp, &attrs.titles.ja_jp].into_iter().flatten() {
+    for title in [&attrs.titles.en, &attrs.titles.en_jp, &attrs.titles.ja_jp]
+        .into_iter()
+        .flatten()
+    {
         aliases.push(title.clone());
     }
 
@@ -283,8 +299,7 @@ fn into_canonical(
             .as_deref()
             .and_then(|r| r.parse::<f64>().ok())
             .map(|r| (r / 100.0).clamp(0.0, 1.0)),
-        nsfw: attrs.nsfw.unwrap_or(false)
-            || matches!(attrs.age_rating.as_deref(), Some("R18")),
+        nsfw: attrs.nsfw.unwrap_or(false) || matches!(attrs.age_rating.as_deref(), Some("R18")),
         aliases,
         genres: Vec::new(),
         tags,
@@ -341,6 +356,39 @@ fn extract_mappings(resource: &Resource, included: &[Included]) -> Vec<MappingAt
             })
         })
         .collect()
+}
+
+fn into_episode(resource: &EpisodeResource, media_kind: MediaKind) -> Result<CanonicalEpisode> {
+    let raw = serde_json::to_value(resource)?;
+    let attrs = &resource.attributes;
+
+    let titles_json = serde_json::to_string(&attrs.titles)?;
+
+    Ok(CanonicalEpisode {
+        source: SourceName::Kitsu,
+        source_id: resource.id.clone(),
+        media_kind,
+        season_number: attrs.season_number,
+        episode_number: attrs.number,
+        absolute_number: attrs.relative_number,
+        title_display: attrs
+            .titles
+            .en
+            .clone()
+            .or_else(|| attrs.titles.en_jp.clone()),
+        title_original: attrs.titles.ja_jp.clone(),
+        synopsis: attrs.synopsis.clone().or_else(|| attrs.description.clone()),
+        air_date: attrs.airdate.clone(),
+        runtime_minutes: attrs.runtime,
+        thumbnail_url: attrs
+            .thumbnail
+            .as_ref()
+            .and_then(|t| t.original.clone().or(t.small.clone())),
+        raw_titles_json: Some(
+            serde_json::from_str(&titles_json).unwrap_or(serde_json::Value::Null),
+        ),
+        raw_json: Some(raw),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -479,4 +527,45 @@ struct MappingAttributes {
     external_site: String,
     #[serde(rename = "externalId")]
     external_id: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Episode response types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct EpisodeCollectionResponse {
+    #[serde(default)]
+    data: Vec<EpisodeResource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EpisodeResource {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub _type: String,
+    pub attributes: EpisodeAttributes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EpisodeAttributes {
+    titles: EpisodeTitles,
+    description: Option<String>,
+    synopsis: Option<String>,
+    number: Option<i32>,
+    #[serde(rename = "relativeNumber")]
+    relative_number: Option<i32>,
+    #[serde(rename = "airdate")]
+    airdate: Option<String>,
+    runtime: Option<i32>,
+    #[serde(rename = "seasonNumber")]
+    season_number: Option<i32>,
+    thumbnail: Option<KitsuImageSet>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct EpisodeTitles {
+    en: Option<String>,
+    en_jp: Option<String>,
+    ja_jp: Option<String>,
 }

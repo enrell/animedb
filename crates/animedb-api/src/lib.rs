@@ -642,7 +642,8 @@ async fn healthz(State(schema): State<AnimeDbSchema>) -> impl IntoResponse {
     let ok = tokio::task::spawn_blocking(move || {
         let db = AnimeDb::open(schema.data::<AppState>().unwrap().database_path.as_path())
             .map_err(|e| e.to_string())?;
-        db.connection().query_row("SELECT 1", [], |_| Ok(()))
+        db.connection()
+            .query_row("SELECT 1", [], |_| Ok(()))
             .map_err(|e| format!("{e}"))
     })
     .await

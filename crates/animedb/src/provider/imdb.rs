@@ -129,7 +129,11 @@ impl Provider for ImdbProvider {
             if items.len() >= limit {
                 return RowAction::Stop;
             }
-            if row.primary_title.to_ascii_lowercase().contains(&query_lower) {
+            if row
+                .primary_title
+                .to_ascii_lowercase()
+                .contains(&query_lower)
+            {
                 items.push(row.into_canonical(None));
             }
             RowAction::Continue
@@ -217,7 +221,10 @@ struct BasicsRow<'a> {
 
 impl<'a> BasicsRow<'a> {
     fn into_canonical(self, rating: Option<f64>) -> CanonicalMedia {
-        let title_display = self.original_title.unwrap_or(self.primary_title).to_string();
+        let title_display = self
+            .original_title
+            .unwrap_or(self.primary_title)
+            .to_string();
 
         let mut aliases = Vec::new();
         if self.original_title.map(|o| o != self.primary_title) == Some(true)
@@ -287,7 +294,11 @@ fn parse_title_type(title_type: &str) -> Option<MediaKind> {
 
 /// Returns `None` if `value` is `\N` or empty, otherwise `Some(String)`.
 fn imdb_str(value: &str) -> Option<&str> {
-    if value == "\\N" || value.is_empty() { None } else { Some(value) }
+    if value == "\\N" || value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 /// Returns `None` if `value` is `\N` or empty, otherwise parses as `i32`.
@@ -305,9 +316,9 @@ where
     let mut line = String::new();
 
     // Skip TSV header.
-    reader.read_line(&mut line).map_err(|e| {
-        Error::Validation(format!("failed to read IMDb dataset header: {e}"))
-    })?;
+    reader
+        .read_line(&mut line)
+        .map_err(|e| Error::Validation(format!("failed to read IMDb dataset header: {e}")))?;
 
     loop {
         line.clear();

@@ -108,7 +108,9 @@ fn main() -> animedb::Result<()> {
             println!("Usage:");
             println!("  e2e_test_runner <db_path> --create-only");
             println!("  e2e_test_runner <db_path> --sync-tvmaze [--pages N] [--page-size N]");
-            println!("  e2e_test_runner <db_path> --sync-imdb [--media-kind movie|show] [--pages N] [--page-size N]");
+            println!(
+                "  e2e_test_runner <db_path> --sync-imdb [--media-kind movie|show] [--pages N] [--page-size N]"
+            );
             println!("  e2e_test_runner <db_path> --remote-search <query>");
         }
     }
