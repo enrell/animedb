@@ -8,7 +8,7 @@ use crate::model::{
     MediaKind, SearchHit, SearchOptions, SourceName, StoredEpisode, StoredMedia, SyncOutcome,
     SyncReport, SyncRequest,
 };
-use crate::provider::{KitsuProvider, Provider};
+use crate::provider::Provider;
 use crate::remote::{RemoteApi, RemoteSource};
 
 /// Local-first entry point for the SQLite-backed catalog.
