@@ -248,15 +248,7 @@ impl AnimeDb {
         source: SourceName,
         source_id: &str,
     ) -> Result<Vec<StoredEpisode>> {
-        let provider = match source {
-            SourceName::Kitsu => Box::new(KitsuProvider::new()) as Box<dyn Provider>,
-            other => {
-                return Err(Error::Validation(format!(
-                    "provider {} does not support episode metadata",
-                    other
-                )));
-            }
-        };
+        let provider = crate::provider::registry::default_registry().get(source)?;
         self.fetch_and_store_episodes_from(&*provider, source, source_id)
     }
 
