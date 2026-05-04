@@ -1,21 +1,14 @@
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use serde_json::Value;
-use std::collections::HashMap;
+use rusqlite::{Connection, OptionalExtension};
 use std::error::Error as StdError;
 use std::path::Path;
-use std::thread;
 
 use crate::error::{Error, Result};
-use crate::merge::{score_boolean, score_cover_image, score_optional_i32, score_text_field};
 use crate::model::{
-    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance,
-    MediaDocument, MediaKind, PersistedSyncState, SearchHit, SearchOptions, SourceName,
-    SourcePayload, StoredEpisode, StoredMedia, SyncCursor, SyncMode, SyncOutcome, SyncReport,
-    SyncRequest,
+    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, FieldProvenance, MediaDocument,
+    MediaKind, SearchHit, SearchOptions, SourceName, StoredEpisode, StoredMedia, SyncOutcome,
+    SyncReport, SyncRequest,
 };
-use crate::provider::{
-    AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, Provider, TvmazeProvider,
-};
+use crate::provider::{KitsuProvider, Provider};
 use crate::remote::{RemoteApi, RemoteSource};
 
 /// Local-first entry point for the SQLite-backed catalog.
@@ -37,8 +30,14 @@ impl AnimeDb {
     pub fn get_by_external_id(&self, source: SourceName, source_id: &str) -> Result<StoredMedia> {
         self.media().get_by_external_id(source, source_id)
     }
-    pub fn get_by_external_id_and_kind(&self, source: SourceName, kind: MediaKind, source_id: &str) -> Result<StoredMedia> {
-        self.media().get_by_external_id_and_kind(source, kind, source_id)
+    pub fn get_by_external_id_and_kind(
+        &self,
+        source: SourceName,
+        kind: MediaKind,
+        source_id: &str,
+    ) -> Result<StoredMedia> {
+        self.media()
+            .get_by_external_id_and_kind(source, kind, source_id)
     }
     pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
         self.search_repo().search(query, options)
@@ -49,23 +48,81 @@ impl AnimeDb {
     pub fn episodes_for_media(&self, media_id: i64) -> Result<Vec<StoredEpisode>> {
         self.episodes().episodes_for_media(media_id)
     }
-    pub fn episode_source_records_for_media(&self, media_id: i64) -> Result<Vec<EpisodeSourceRecord>> {
+    pub fn episode_source_records_for_media(
+        &self,
+        media_id: i64,
+    ) -> Result<Vec<EpisodeSourceRecord>> {
         self.episodes().episode_source_records_for_media(media_id)
     }
-    pub fn episode_by_absolute_number(&self, media_id: i64, abs_num: i32) -> Result<Option<StoredEpisode>> {
-        self.episodes().episode_by_absolute_number(media_id, abs_num)
+    pub fn episode_by_absolute_number(
+        &self,
+        media_id: i64,
+        abs_num: i32,
+    ) -> Result<Option<StoredEpisode>> {
+        self.episodes()
+            .episode_by_absolute_number(media_id, abs_num)
     }
-    pub fn episode_by_season_episode(&self, media_id: i64, s: i32, e: i32) -> Result<Option<StoredEpisode>> {
+    pub fn episode_by_season_episode(
+        &self,
+        media_id: i64,
+        s: i32,
+        e: i32,
+    ) -> Result<Option<StoredEpisode>> {
         self.episodes().episode_by_season_episode(media_id, s, e)
     }
     pub fn media_document_by_id(&self, media_id: i64) -> Result<MediaDocument> {
         self.search_repo().media_document_by_id(media_id)
     }
-    pub fn media_document_by_external_id(&self, source: SourceName, source_id: &str) -> Result<MediaDocument> {
-        self.search_repo().media_document_by_external_id(source, source_id)
+    pub fn media_document_by_external_id(
+        &self,
+        source: SourceName,
+        source_id: &str,
+    ) -> Result<MediaDocument> {
+        self.search_repo()
+            .media_document_by_external_id(source, source_id)
     }
-    
+
     /// Builds a remote-only facade for a selected provider.
+
+    pub fn sync_service(&mut self) -> crate::sync::SyncService<'_> {
+        crate::sync::SyncService { db: self }
+    }
+
+    pub fn sync_from<P: Provider>(
+        &mut self,
+        provider: &P,
+        request: SyncRequest,
+    ) -> Result<SyncOutcome> {
+        self.sync_service().sync_from(provider, request)
+    }
+
+    pub fn sync_default_sources(&mut self) -> Result<SyncReport> {
+        self.sync_service().sync_default_sources()
+    }
+
+    pub fn sync_database(path: impl AsRef<Path>) -> Result<SyncReport> {
+        crate::sync::SyncService::sync_database(path)
+    }
+
+    pub fn sync_anilist(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
+        self.sync_service().sync_anilist(media_kind)
+    }
+
+    pub fn sync_jikan(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
+        self.sync_service().sync_jikan(media_kind)
+    }
+
+    pub fn sync_kitsu(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
+        self.sync_service().sync_kitsu(media_kind)
+    }
+
+    pub fn sync_tvmaze(&mut self) -> Result<SyncOutcome> {
+        self.sync_service().sync_tvmaze()
+    }
+
+    pub fn sync_imdb(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
+        self.sync_service().sync_imdb(media_kind)
+    }
 
     pub fn media(&self) -> crate::repository::MediaRepository<'_> {
         crate::repository::MediaRepository { conn: &self.conn }
@@ -116,50 +173,16 @@ impl AnimeDb {
     }
 
     /// Opens an existing database path and syncs the default providers into it.
-    pub fn sync_database(path: impl AsRef<Path>) -> Result<SyncReport> {
-        let mut db = Self::open(path)?;
-        db.sync_default_sources()
-    }
 
     /// Syncs AniList records for one media kind into the local database.
-    pub fn sync_anilist(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
-        self.sync_from(
-            &AniListProvider::default(),
-            SyncRequest::new(SourceName::AniList).with_media_kind(media_kind),
-        )
-    }
 
     /// Syncs Jikan records for one media kind into the local database.
-    pub fn sync_jikan(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
-        self.sync_from(
-            &JikanProvider::default(),
-            SyncRequest::new(SourceName::Jikan).with_media_kind(media_kind),
-        )
-    }
 
     /// Syncs Kitsu records for one media kind into the local database.
-    pub fn sync_kitsu(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
-        self.sync_from(
-            &KitsuProvider::default(),
-            SyncRequest::new(SourceName::Kitsu).with_media_kind(media_kind),
-        )
-    }
 
     /// Syncs TVmaze show records into the local database.
-    pub fn sync_tvmaze(&mut self) -> Result<SyncOutcome> {
-        self.sync_from(
-            &TvmazeProvider::default(),
-            SyncRequest::new(SourceName::Tvmaze).with_media_kind(MediaKind::Show),
-        )
-    }
 
     /// Syncs IMDb records for one media kind into the local database.
-    pub fn sync_imdb(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
-        self.sync_from(
-            &ImdbProvider::default(),
-            SyncRequest::new(SourceName::Imdb).with_media_kind(media_kind),
-        )
-    }
 
     /// Opens or creates a SQLite catalog, applies runtime pragmas, and runs migrations.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -203,136 +226,6 @@ impl AnimeDb {
                 .with_media_kind(MediaKind::Anime)
                 .with_format("MOVIE"),
         )
-    }
-
-    pub fn sync_from<P: Provider>(
-        &mut self,
-        provider: &P,
-        request: SyncRequest,
-    ) -> Result<SyncOutcome> {
-        if provider.source() != request.source {
-            return Err(Error::Validation(format!(
-                "sync source mismatch: request={} provider={}",
-                request.source,
-                provider.source()
-            )));
-        }
-
-        let scope = request
-            .media_kind
-            .map(|kind| kind.as_str().to_string())
-            .unwrap_or_else(|| "all".to_string());
-
-        let mut cursor = request
-            .start_cursor
-            .clone()
-            .or_else(|| {
-                self.sync_state()
-                    .load_sync_state(request.source, &scope)
-                    .ok()
-                    .and_then(|state| state.cursor)
-            })
-            .unwrap_or_default();
-
-        let max_pages = request.max_pages.unwrap_or(usize::MAX);
-        let mut fetched_pages = 0usize;
-        let mut upserted_records = 0usize;
-        let mut last_cursor = None;
-
-        while fetched_pages < max_pages {
-            let page = provider.fetch_page(&request, cursor.clone())?;
-            if page.items.is_empty() {
-                self.sync_state().save_sync_state(PersistedSyncState {
-                    source: request.source,
-                    scope: scope.clone(),
-                    cursor: last_cursor.clone(),
-                    last_success_at: Some(now_string()),
-                    last_error: None,
-                    last_page: last_cursor.as_ref().map(|value| value.page as i64),
-                    mode: request.mode,
-                })?;
-                break;
-            }
-
-            for item in &page.items {
-                crate::repository::MediaRepository::upsert_media(&mut self.conn, item)?;
-                upserted_records += 1;
-            }
-
-            fetched_pages += 1;
-            last_cursor = Some(cursor.clone());
-
-            self.sync_state().save_sync_state(PersistedSyncState {
-                source: request.source,
-                scope: scope.clone(),
-                cursor: page.next_cursor.clone(),
-                last_success_at: Some(now_string()),
-                last_error: None,
-                last_page: Some(cursor.page as i64),
-                mode: request.mode,
-            })?;
-
-            let Some(next_cursor) = page.next_cursor else {
-                break;
-            };
-
-            cursor = next_cursor;
-            let sleep_for = provider.min_interval();
-            if !sleep_for.is_zero() {
-                thread::sleep(sleep_for);
-            }
-        }
-
-        Ok(SyncOutcome {
-            source: request.source,
-            media_kind: request.media_kind,
-            fetched_pages,
-            upserted_records,
-            last_cursor,
-        })
-    }
-
-    pub fn sync_default_sources(&mut self) -> Result<SyncReport> {
-        let anilist = AniListProvider::default();
-        let jikan = JikanProvider::default();
-        let kitsu = KitsuProvider::default();
-        let tvmaze = TvmazeProvider::default();
-        let imdb = ImdbProvider::default();
-        let mut outcomes = Vec::new();
-
-        for media_kind in [MediaKind::Anime, MediaKind::Manga] {
-            outcomes.push(self.sync_from(
-                &anilist,
-                SyncRequest::new(SourceName::AniList).with_media_kind(media_kind),
-            )?);
-            outcomes.push(self.sync_from(
-                &jikan,
-                SyncRequest::new(SourceName::Jikan).with_media_kind(media_kind),
-            )?);
-            outcomes.push(self.sync_from(
-                &kitsu,
-                SyncRequest::new(SourceName::Kitsu).with_media_kind(media_kind),
-            )?);
-        }
-
-        outcomes.push(self.sync_from(
-            &tvmaze,
-            SyncRequest::new(SourceName::Tvmaze).with_media_kind(MediaKind::Show),
-        )?);
-
-        for media_kind in [MediaKind::Show, MediaKind::Movie] {
-            outcomes.push(self.sync_from(
-                &imdb,
-                SyncRequest::new(SourceName::Imdb).with_media_kind(media_kind),
-            )?);
-        }
-
-        let total_upserted_records = outcomes.iter().map(|item| item.upserted_records).sum();
-
-        Ok(SyncReport {
-            outcomes,
-            total_upserted_records,
-        })
     }
 
     /// Inserts a source episode record, then merges to update canonical episodes.
@@ -492,7 +385,11 @@ fn now_string() -> String {
 mod tests {
     use super::*;
     use crate::model::{
-        CanonicalMedia, ExternalId, MediaKind, SearchOptions, SourceName, SourcePayload,
+        CanonicalEpisode, CanonicalMedia, ExternalId, MediaKind, SearchOptions, SourceName,
+        SourcePayload,
+    };
+    use crate::provider::{
+        AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, Provider, TvmazeProvider,
     };
 
     fn sample_media() -> CanonicalMedia {
@@ -931,8 +828,7 @@ mod tests {
             field_provenance: Vec::new(),
         };
 
-        let first_id = db.upsert_media(&tvmaze_show)
-            .expect("upsert tvmaze");
+        let first_id = db.upsert_media(&tvmaze_show).expect("upsert tvmaze");
         let second_id = db.upsert_media(&imdb_show).expect("upsert imdb");
 
         assert_eq!(first_id, second_id);
@@ -1261,8 +1157,7 @@ mod tests {
             )
         };
 
-        let first = db.upsert_media(&tvmaze_entry)
-            .expect("upsert tvmaze");
+        let first = db.upsert_media(&tvmaze_entry).expect("upsert tvmaze");
         let second = db.upsert_media(&imdb_entry).expect("upsert imdb");
         assert_eq!(first, second);
 

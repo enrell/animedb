@@ -1,6 +1,6 @@
 use crate::model::{
-    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance, MediaKind,
-    SourceName, SourcePayload, StoredEpisode, StoredMedia,
+    CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance, SourceName, SourcePayload,
+    StoredEpisode, StoredMedia,
 };
 use std::collections::HashMap;
 

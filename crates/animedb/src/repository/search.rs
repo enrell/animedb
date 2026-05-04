@@ -1,7 +1,7 @@
 use super::common::*;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::model::*;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 
 pub struct SearchRepository<'a> {
     pub conn: &'a Connection,

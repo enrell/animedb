@@ -96,6 +96,7 @@ pub mod http;
 pub mod imdb;
 pub mod jikan;
 pub mod kitsu;
+pub mod registry;
 pub mod tvmaze;
 
 // ---------------------------------------------------------------------------
@@ -106,6 +107,7 @@ pub use anilist::AniListProvider;
 pub use imdb::ImdbProvider;
 pub use jikan::JikanProvider;
 pub use kitsu::KitsuProvider;
+pub use registry::{ProviderRegistry, default_registry};
 pub use tvmaze::TvmazeProvider;
 
 // Keep the old name alive as an alias so existing call sites don't break.

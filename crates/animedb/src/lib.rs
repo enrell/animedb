@@ -35,6 +35,8 @@ mod remote;
 pub mod repository;
 #[cfg(feature = "local-db")]
 mod schema;
+#[cfg(feature = "local-db")]
+pub mod sync;
 
 // ---------------------------------------------------------------------------
 // Pure data types: always available (no SQLite dependency)
