@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use crate::model::{
-    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, FieldProvenance, MediaDocument,
+    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, MediaDocument,
     MediaKind, SearchHit, SearchOptions, SourceName, StoredEpisode, StoredMedia, SyncOutcome,
     SyncReport, SyncRequest,
 };
@@ -413,42 +413,38 @@ impl<'a> MetadataCollection<'a> {
     }
 }
 
-fn make_provenance(
-    field_name: &str,
-    source: SourceName,
-    source_id: &str,
-    score: f64,
-    reason: String,
-) -> FieldProvenance {
-    FieldProvenance {
-        field_name: field_name.to_string(),
-        source,
-        source_id: source_id.to_string(),
-        score,
-        reason,
-        updated_at: now_string(),
-    }
-}
-
-/// Provider priority for episode merge (higher = more preferred).
-
-/// Merges a group of source records into a single canonical episode.
-/// Uses provider priority to resolve field conflicts.
-
-fn now_string() -> String {
-    let unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    unix.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_provenance(
+        field_name: &str,
+        source: SourceName,
+        source_id: &str,
+        score: f64,
+        reason: String,
+    ) -> FieldProvenance {
+        FieldProvenance {
+            field_name: field_name.to_string(),
+            source,
+            source_id: source_id.to_string(),
+            score,
+            reason,
+            updated_at: now_string(),
+        }
+    }
+
+    fn now_string() -> String {
+        let unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        unix.to_string()
+    }
+
     use crate::model::{
-        CanonicalEpisode, CanonicalMedia, ExternalId, MediaKind, SearchOptions, SourceName,
-        SourcePayload,
+        CanonicalEpisode, CanonicalMedia, ExternalId, FieldProvenance, MediaKind, SearchOptions,
+        SourceName, SourcePayload,
     };
     use crate::provider::{
         AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, Provider, TvmazeProvider,
