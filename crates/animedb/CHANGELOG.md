@@ -17,3 +17,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`provider/http.rs`**: Regression tests confirming `HttpClient` construction is safe inside both `#[tokio::test]` and `#[test]` environments.
 - **`Cargo.toml`**: Added `tokio` as a dev-dependency for the regression tests.
+- **`lib.rs`**: Re-exported `merge_media`, `merge_episode_source_records`, `provider_weight`, and `MergeDecision` publicly — previously only accessible internally.
