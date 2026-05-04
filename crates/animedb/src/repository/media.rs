@@ -9,9 +9,10 @@ use serde_json::Value;
 
 /// Repository for media record persistence and lookup.
 ///
-/// All methods are thin wrappers over SQLite queries. The `upsert_media_in_tx`
-/// method is the core write path — it calls [`merge_media`] internally to
-/// resolve field-level conflicts before writing.
+/// All methods are thin wrappers over SQLite queries. The core write path
+/// merges incoming fields against stored provenance and updates all
+/// related tables (`media`, `media_alias`, `media_external_id`, `source_record`,
+/// `field_provenance`, `media_fts`) atomically inside a transaction.
 pub struct MediaRepository<'a> {
     pub conn: &'a Connection,
 }
