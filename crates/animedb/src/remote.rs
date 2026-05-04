@@ -23,7 +23,7 @@ use crate::provider::{
 
 /// Named variants for the built-in providers.
 ///
-/// Using [`RemoteApi::new`] with a `Box<dyn Provider>` is preferred for new
+/// Using [`RemoteApi::with_provider`] with any type implementing [`Provider`] is preferred for new
 /// code; this enum exists for ergonomic constructors and serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteSource {
