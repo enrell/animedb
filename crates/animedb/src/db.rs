@@ -1211,7 +1211,7 @@ impl AnimeDb {
         &self,
         media_id: i64,
         absolute_number: i32,
-    ) -> Result<StoredEpisode> {
+    ) -> Result<Option<StoredEpisode>> {
         self.conn
             .query_row(
                 r#"
@@ -1227,8 +1227,8 @@ impl AnimeDb {
                 params![media_id, absolute_number],
                 parse_stored_episode,
             )
-            .optional()?
-            .ok_or(Error::NotFound)
+            .optional()
+            .map_err(Error::from)
     }
 
     pub fn episode_by_season_episode(
@@ -1236,7 +1236,7 @@ impl AnimeDb {
         media_id: i64,
         season_number: i32,
         episode_number: i32,
-    ) -> Result<StoredEpisode> {
+    ) -> Result<Option<StoredEpisode>> {
         self.conn
             .query_row(
                 r#"
@@ -1252,11 +1252,28 @@ impl AnimeDb {
                 params![media_id, season_number, episode_number],
                 parse_stored_episode,
             )
-            .optional()?
-            .ok_or(Error::NotFound)
+            .optional()
+            .map_err(Error::from)
     }
 
     pub fn fetch_and_store_episodes(
+        &mut self,
+        source: SourceName,
+        source_id: &str,
+    ) -> Result<Vec<StoredEpisode>> {
+        let provider = match source {
+            SourceName::Kitsu => Box::new(KitsuProvider::new()) as Box<dyn Provider>,
+            other => {
+                return Err(Error::Validation(format!(
+                    "provider {} does not support episode metadata",
+                    other
+                )));
+            }
+        };
+        self.fetch_and_store_episodes_from(&*provider, source, source_id)
+    }
+
+    pub fn fetch_and_store_episodes_from(
         &mut self,
         provider: &dyn Provider,
         source: SourceName,
@@ -1287,6 +1304,17 @@ impl AnimeDb {
         source_id: &str,
     ) -> Result<MediaDocument> {
         let media = self.get_by_external_id(source, source_id)?;
+        let episodes = self.episodes_for_media(media.id)?;
+        Ok(MediaDocument { media, episodes })
+    }
+
+    pub fn media_document_by_external_id_and_kind(
+        &self,
+        source: SourceName,
+        media_kind: MediaKind,
+        source_id: &str,
+    ) -> Result<MediaDocument> {
+        let media = self.get_by_external_id_and_kind(source, media_kind, source_id)?;
         let episodes = self.episodes_for_media(media.id)?;
         Ok(MediaDocument { media, episodes })
     }
@@ -3459,10 +3487,10 @@ mod tests {
         let found = db
             .episode_by_absolute_number(media_id, 2)
             .expect("find by absolute");
-        assert_eq!(found.episode_number, Some(2));
+        assert_eq!(found.unwrap().episode_number, Some(2));
 
         let not_found = db.episode_by_absolute_number(media_id, 99);
-        assert!(not_found.is_err());
+        assert!(not_found.unwrap().is_none());
     }
 
     #[test]
@@ -3498,6 +3526,7 @@ mod tests {
         let found = db
             .episode_by_season_episode(media_id, 1, 5)
             .expect("find by season/episode");
+        let found = found.unwrap();
         assert_eq!(found.season_number, Some(1));
         assert_eq!(found.episode_number, Some(5));
     }
