@@ -1,4 +1,8 @@
-use crate::model::{CanonicalMedia, SourceName};
+use crate::model::{
+    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance, MediaKind,
+    SourceName, SourcePayload, StoredEpisode, StoredMedia,
+};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct MergeDecision<T> {
@@ -173,4 +177,590 @@ fn consistency_bonus(candidate: &CanonicalMedia) -> f64 {
     }
 
     filled.clamp(0.0, 1.0)
+}
+
+pub fn merge_media(existing: Option<&StoredMedia>, incoming: &CanonicalMedia) -> CanonicalMedia {
+    let origin = incoming_origin(incoming);
+    let existing_scores = existing_score_map(existing);
+    let mut provenance = Vec::new();
+
+    let title_display = choose_text(
+        "title_display",
+        existing.map(|item| item.title_display.as_str()),
+        existing_scores.get("title_display"),
+        Some(incoming.title_display.as_str()),
+        incoming,
+        &origin,
+        &mut provenance,
+    )
+    .unwrap_or_else(|| incoming.title_display.clone());
+
+    let title_romaji = choose_text(
+        "title_romaji",
+        existing.and_then(|item| item.title_romaji.as_deref()),
+        existing_scores.get("title_romaji"),
+        incoming.title_romaji.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let title_english = choose_text(
+        "title_english",
+        existing.and_then(|item| item.title_english.as_deref()),
+        existing_scores.get("title_english"),
+        incoming.title_english.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let title_native = choose_text(
+        "title_native",
+        existing.and_then(|item| item.title_native.as_deref()),
+        existing_scores.get("title_native"),
+        incoming.title_native.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let synopsis = choose_text(
+        "synopsis",
+        existing.and_then(|item| item.synopsis.as_deref()),
+        existing_scores.get("synopsis"),
+        incoming.synopsis.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let format = choose_text(
+        "format",
+        existing.and_then(|item| item.format.as_deref()),
+        existing_scores.get("format"),
+        incoming.format.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let status = choose_text(
+        "status",
+        existing.and_then(|item| item.status.as_deref()),
+        existing_scores.get("status"),
+        incoming.status.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let season = choose_text(
+        "season",
+        existing.and_then(|item| item.season.as_deref()),
+        existing_scores.get("season"),
+        incoming.season.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let country_of_origin = choose_text(
+        "country_of_origin",
+        existing.and_then(|item| item.country_of_origin.as_deref()),
+        existing_scores.get("country_of_origin"),
+        incoming.country_of_origin.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+
+    let season_year = choose_i32(
+        "season_year",
+        existing.and_then(|item| item.season_year),
+        existing_scores.get("season_year"),
+        incoming.season_year,
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let episodes = choose_i32(
+        "episodes",
+        existing.and_then(|item| item.episodes),
+        existing_scores.get("episodes"),
+        incoming.episodes,
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let chapters = choose_i32(
+        "chapters",
+        existing.and_then(|item| item.chapters),
+        existing_scores.get("chapters"),
+        incoming.chapters,
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let volumes = choose_i32(
+        "volumes",
+        existing.and_then(|item| item.volumes),
+        existing_scores.get("volumes"),
+        incoming.volumes,
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+
+    let cover_image = choose_cover(
+        "cover_image",
+        existing.and_then(|item| item.cover_image.as_deref()),
+        existing_scores.get("cover_image"),
+        incoming.cover_image.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let banner_image = choose_cover(
+        "banner_image",
+        existing.and_then(|item| item.banner_image.as_deref()),
+        existing_scores.get("banner_image"),
+        incoming.banner_image.as_deref(),
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let nsfw = choose_bool(
+        "nsfw",
+        existing.map(|item| item.nsfw),
+        existing_scores.get("nsfw"),
+        incoming.nsfw,
+        incoming,
+        &origin,
+        &mut provenance,
+    );
+    let provider_rating = choose_rating(
+        existing.and_then(|item| item.provider_rating),
+        incoming.provider_rating,
+    );
+
+    CanonicalMedia {
+        media_kind: existing
+            .map(|item| item.media_kind)
+            .unwrap_or(incoming.media_kind),
+        title_display,
+        title_romaji,
+        title_english,
+        title_native,
+        synopsis,
+        format,
+        status,
+        season,
+        season_year,
+        episodes,
+        chapters,
+        volumes,
+        country_of_origin,
+        cover_image,
+        banner_image,
+        provider_rating,
+        nsfw,
+        aliases: merge_string_lists(
+            existing.map(|item| item.aliases.as_slice()),
+            &incoming.aliases,
+        ),
+        genres: merge_string_lists(
+            existing.map(|item| item.genres.as_slice()),
+            &incoming.genres,
+        ),
+        tags: merge_string_lists(existing.map(|item| item.tags.as_slice()), &incoming.tags),
+        external_ids: merge_external_ids(
+            existing.map(|item| item.external_ids.as_slice()),
+            &incoming.external_ids,
+        ),
+        source_payloads: merge_source_payloads(
+            existing.map(|item| item.source_payloads.as_slice()),
+            &incoming.source_payloads,
+        ),
+        field_provenance: provenance,
+    }
+}
+
+pub fn merge_episode_source_records(records: &[EpisodeSourceRecord]) -> StoredEpisode {
+    // Sort by priority descending
+    let mut sorted = records.to_vec();
+    sorted.sort_by_key(|r| episode_provider_priority(r.source));
+    let highest = &sorted[0];
+
+    fn pick<T: Clone>(values: &[(Option<T>, SourceName)]) -> Option<T> {
+        // Sort by priority descending and take the last (highest priority)
+        let mut with_prio: Vec<_> = values
+            .iter()
+            .filter_map(|(v, s)| v.as_ref().map(|val| (val, *s)))
+            .collect();
+        with_prio.sort_by_key(|(_, s)| episode_provider_priority(*s));
+        with_prio.last().map(|(v, _)| (*v).clone())
+    }
+
+    let title_display = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.title_display.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let title_original = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.title_original.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let synopsis = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.synopsis.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let air_date = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.air_date.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let runtime_minutes = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.runtime_minutes, r.source))
+            .collect::<Vec<_>>(),
+    );
+    let thumbnail_url = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.thumbnail_url.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let titles_json = highest.titles_json.clone();
+
+    StoredEpisode {
+        id: 0, // Will be assigned on insert
+        media_id: highest.media_id,
+        season_number: highest.season_number,
+        episode_number: highest.episode_number,
+        absolute_number: highest.absolute_number,
+        title_display,
+        title_original,
+        titles_json,
+        synopsis,
+        air_date,
+        runtime_minutes,
+        thumbnail_url,
+    }
+}
+
+fn episode_provider_priority(source: SourceName) -> u8 {
+    match source {
+        SourceName::AniList => 5,
+        SourceName::MyAnimeList => 4,
+        SourceName::Jikan => 3,
+        SourceName::Kitsu => 2,
+        SourceName::Tvmaze => 4,
+        SourceName::Imdb => 5,
+    }
+}
+
+fn choose_text(
+    field_name: &str,
+    existing_value: Option<&str>,
+    existing_provenance: Option<&FieldProvenance>,
+    incoming_value: Option<&str>,
+    incoming: &CanonicalMedia,
+    origin: &(SourceName, String),
+    provenance: &mut Vec<FieldProvenance>,
+) -> Option<String> {
+    match (existing_value, incoming_value) {
+        (Some(existing), Some(candidate)) => {
+            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
+            let incoming_decision = score_text_field(origin.0, field_name, candidate, incoming);
+            if incoming_decision.score >= existing_score {
+                provenance.push(make_provenance(
+                    field_name,
+                    origin.0,
+                    origin.1.as_str(),
+                    incoming_decision.score,
+                    incoming_decision.reason,
+                ));
+                Some(incoming_decision.value)
+            } else {
+                if let Some(entry) = existing_provenance.cloned() {
+                    provenance.push(entry);
+                }
+                Some(existing.to_string())
+            }
+        }
+        (None, Some(candidate)) => {
+            let incoming_decision = score_text_field(origin.0, field_name, candidate, incoming);
+            provenance.push(make_provenance(
+                field_name,
+                origin.0,
+                origin.1.as_str(),
+                incoming_decision.score,
+                incoming_decision.reason,
+            ));
+            Some(incoming_decision.value)
+        }
+        (Some(existing), None) => {
+            if let Some(entry) = existing_provenance.cloned() {
+                provenance.push(entry);
+            }
+            Some(existing.to_string())
+        }
+        (None, None) => None,
+    }
+}
+
+fn choose_i32(
+    field_name: &str,
+    existing_value: Option<i32>,
+    existing_provenance: Option<&FieldProvenance>,
+    incoming_value: Option<i32>,
+    incoming: &CanonicalMedia,
+    origin: &(SourceName, String),
+    provenance: &mut Vec<FieldProvenance>,
+) -> Option<i32> {
+    match (existing_value, incoming_value) {
+        (Some(existing), Some(candidate)) => {
+            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
+            let incoming_decision = score_optional_i32(origin.0, candidate, incoming);
+            if incoming_decision.score >= existing_score {
+                provenance.push(make_provenance(
+                    field_name,
+                    origin.0,
+                    origin.1.as_str(),
+                    incoming_decision.score,
+                    incoming_decision.reason,
+                ));
+                Some(incoming_decision.value)
+            } else {
+                if let Some(entry) = existing_provenance.cloned() {
+                    provenance.push(entry);
+                }
+                Some(existing)
+            }
+        }
+        (None, Some(candidate)) => {
+            let incoming_decision = score_optional_i32(origin.0, candidate, incoming);
+            provenance.push(make_provenance(
+                field_name,
+                origin.0,
+                origin.1.as_str(),
+                incoming_decision.score,
+                incoming_decision.reason,
+            ));
+            Some(incoming_decision.value)
+        }
+        (Some(existing), None) => {
+            if let Some(entry) = existing_provenance.cloned() {
+                provenance.push(entry);
+            }
+            Some(existing)
+        }
+        (None, None) => None,
+    }
+}
+
+fn choose_cover(
+    field_name: &str,
+    existing_value: Option<&str>,
+    existing_provenance: Option<&FieldProvenance>,
+    incoming_value: Option<&str>,
+    incoming: &CanonicalMedia,
+    origin: &(SourceName, String),
+    provenance: &mut Vec<FieldProvenance>,
+) -> Option<String> {
+    match (existing_value, incoming_value) {
+        (Some(existing), Some(candidate)) => {
+            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
+            let incoming_decision = score_cover_image(origin.0, candidate, incoming);
+            if incoming_decision.score >= existing_score {
+                provenance.push(make_provenance(
+                    field_name,
+                    origin.0,
+                    origin.1.as_str(),
+                    incoming_decision.score,
+                    incoming_decision.reason,
+                ));
+                Some(incoming_decision.value)
+            } else {
+                if let Some(entry) = existing_provenance.cloned() {
+                    provenance.push(entry);
+                }
+                Some(existing.to_string())
+            }
+        }
+        (None, Some(candidate)) => {
+            let incoming_decision = score_cover_image(origin.0, candidate, incoming);
+            provenance.push(make_provenance(
+                field_name,
+                origin.0,
+                origin.1.as_str(),
+                incoming_decision.score,
+                incoming_decision.reason,
+            ));
+            Some(incoming_decision.value)
+        }
+        (Some(existing), None) => {
+            if let Some(entry) = existing_provenance.cloned() {
+                provenance.push(entry);
+            }
+            Some(existing.to_string())
+        }
+        (None, None) => None,
+    }
+}
+
+fn choose_bool(
+    field_name: &str,
+    existing_value: Option<bool>,
+    existing_provenance: Option<&FieldProvenance>,
+    incoming_value: bool,
+    incoming: &CanonicalMedia,
+    origin: &(SourceName, String),
+    provenance: &mut Vec<FieldProvenance>,
+) -> bool {
+    match existing_value {
+        Some(existing) => {
+            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
+            let incoming_decision = score_boolean(origin.0, incoming_value, incoming);
+            if incoming_decision.score >= existing_score {
+                provenance.push(make_provenance(
+                    field_name,
+                    origin.0,
+                    origin.1.as_str(),
+                    incoming_decision.score,
+                    incoming_decision.reason,
+                ));
+                incoming_decision.value
+            } else {
+                if let Some(entry) = existing_provenance.cloned() {
+                    provenance.push(entry);
+                }
+                existing
+            }
+        }
+        None => {
+            let incoming_decision = score_boolean(origin.0, incoming_value, incoming);
+            provenance.push(make_provenance(
+                field_name,
+                origin.0,
+                origin.1.as_str(),
+                incoming_decision.score,
+                incoming_decision.reason,
+            ));
+            incoming_decision.value
+        }
+    }
+}
+
+fn merge_external_ids(existing: Option<&[ExternalId]>, incoming: &[ExternalId]) -> Vec<ExternalId> {
+    let mut values = Vec::new();
+    for item in existing.into_iter().flatten() {
+        if !values.iter().any(|value: &ExternalId| {
+            value.source == item.source && value.source_id == item.source_id
+        }) {
+            values.push(item.clone());
+        }
+    }
+    for item in incoming {
+        if !values.iter().any(|value: &ExternalId| {
+            value.source == item.source && value.source_id == item.source_id
+        }) {
+            values.push(item.clone());
+        }
+    }
+    values
+}
+
+fn merge_source_payloads(
+    existing: Option<&[SourcePayload]>,
+    incoming: &[SourcePayload],
+) -> Vec<SourcePayload> {
+    let mut values = Vec::new();
+    for item in existing.into_iter().flatten() {
+        if !values.iter().any(|value: &SourcePayload| {
+            value.source == item.source && value.source_id == item.source_id
+        }) {
+            values.push(item.clone());
+        }
+    }
+    for item in incoming {
+        if let Some(existing_item) = values.iter_mut().find(|value: &&mut SourcePayload| {
+            value.source == item.source && value.source_id == item.source_id
+        }) {
+            *existing_item = item.clone();
+        } else {
+            values.push(item.clone());
+        }
+    }
+    values
+}
+
+pub fn make_provenance(
+    field_name: &str,
+    source: SourceName,
+    source_id: &str,
+    score: f64,
+    reason: String,
+) -> FieldProvenance {
+    FieldProvenance {
+        field_name: field_name.to_string(),
+        source,
+        source_id: source_id.to_string(),
+        score,
+        reason,
+        updated_at: String::new(), // Will be populated by DB DEFAULT
+    }
+}
+
+fn incoming_origin(media: &CanonicalMedia) -> (SourceName, String) {
+    if let Some(payload) = media.source_payloads.first() {
+        return (payload.source, payload.source_id.clone());
+    }
+    if let Some(external_id) = media.external_ids.first() {
+        return (external_id.source, external_id.source_id.clone());
+    }
+    (SourceName::AniList, "unknown".to_string())
+}
+
+fn existing_score_map(existing: Option<&StoredMedia>) -> HashMap<String, FieldProvenance> {
+    existing
+        .map(|item| {
+            item.field_provenance
+                .iter()
+                .cloned()
+                .map(|entry| (entry.field_name.clone(), entry))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn choose_rating(existing_value: Option<f64>, incoming_value: Option<f64>) -> Option<f64> {
+    match (existing_value, incoming_value) {
+        (Some(existing), Some(candidate)) => Some(existing.max(candidate)),
+        (None, Some(candidate)) => Some(candidate),
+        (Some(existing), None) => Some(existing),
+        (None, None) => None,
+    }
+}
+
+fn merge_string_lists(existing: Option<&[String]>, incoming: &[String]) -> Vec<String> {
+    let mut values = Vec::new();
+    for value in existing.into_iter().flatten() {
+        if !values
+            .iter()
+            .any(|item: &String| item.eq_ignore_ascii_case(value))
+        {
+            values.push(value.clone());
+        }
+    }
+    for value in incoming {
+        if !values
+            .iter()
+            .any(|item: &String| item.eq_ignore_ascii_case(value))
+        {
+            values.push(value.clone());
+        }
+    }
+    values
 }

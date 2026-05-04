@@ -61,7 +61,7 @@ impl QueryRoot {
         let state = ctx.data_unchecked::<AppState>().clone();
         let media = tokio::task::spawn_blocking(move || {
             let db = AnimeDb::open(&state.database_path)?;
-            db.get_media(id).map(MediaObject::from).map(Some)
+            db.media().get_media(id).map(MediaObject::from).map(Some)
         })
         .await
         .map_err(join_error)?
@@ -80,7 +80,8 @@ impl QueryRoot {
         let source = source.into_model();
         let media = tokio::task::spawn_blocking(move || {
             let db = AnimeDb::open(&state.database_path)?;
-            db.get_by_external_id(source, &source_id)
+            db.media()
+                .get_by_external_id(source, &source_id)
                 .map(MediaObject::from)
                 .map(Some)
         })
@@ -101,7 +102,8 @@ impl QueryRoot {
         let options = options.unwrap_or_default().into_model();
         let hits = tokio::task::spawn_blocking(move || {
             let db = AnimeDb::open(&state.database_path)?;
-            db.search(&query, options)
+            db.search_repo()
+                .search(&query, options)
                 .map(|items| items.into_iter().map(SearchHitObject::from).collect())
         })
         .await
@@ -120,7 +122,8 @@ impl QueryRoot {
         let source = source.into_model();
         let sync_state = tokio::task::spawn_blocking(move || {
             let db = AnimeDb::open(&state.database_path)?;
-            db.load_sync_state(source, &scope)
+            db.sync_state()
+                .load_sync_state(source, &scope)
                 .map(SyncStateObject::from)
                 .map(Some)
         })

@@ -28,7 +28,61 @@ pub struct AnimeDb {
 }
 
 impl AnimeDb {
+    pub fn upsert_media(&mut self, media: &CanonicalMedia) -> Result<i64> {
+        crate::repository::MediaRepository::upsert_media(&mut self.conn, media)
+    }
+    pub fn get_media(&self, media_id: i64) -> Result<StoredMedia> {
+        self.media().get_media(media_id)
+    }
+    pub fn get_by_external_id(&self, source: SourceName, source_id: &str) -> Result<StoredMedia> {
+        self.media().get_by_external_id(source, source_id)
+    }
+    pub fn get_by_external_id_and_kind(&self, source: SourceName, kind: MediaKind, source_id: &str) -> Result<StoredMedia> {
+        self.media().get_by_external_id_and_kind(source, kind, source_id)
+    }
+    pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
+        self.search_repo().search(query, options)
+    }
+    pub fn upsert_episode(&mut self, episode: &CanonicalEpisode, media_id: i64) -> Result<i64> {
+        self.episodes().upsert_episode(episode, media_id)
+    }
+    pub fn episodes_for_media(&self, media_id: i64) -> Result<Vec<StoredEpisode>> {
+        self.episodes().episodes_for_media(media_id)
+    }
+    pub fn episode_source_records_for_media(&self, media_id: i64) -> Result<Vec<EpisodeSourceRecord>> {
+        self.episodes().episode_source_records_for_media(media_id)
+    }
+    pub fn episode_by_absolute_number(&self, media_id: i64, abs_num: i32) -> Result<Option<StoredEpisode>> {
+        self.episodes().episode_by_absolute_number(media_id, abs_num)
+    }
+    pub fn episode_by_season_episode(&self, media_id: i64, s: i32, e: i32) -> Result<Option<StoredEpisode>> {
+        self.episodes().episode_by_season_episode(media_id, s, e)
+    }
+    pub fn media_document_by_id(&self, media_id: i64) -> Result<MediaDocument> {
+        self.search_repo().media_document_by_id(media_id)
+    }
+    pub fn media_document_by_external_id(&self, source: SourceName, source_id: &str) -> Result<MediaDocument> {
+        self.search_repo().media_document_by_external_id(source, source_id)
+    }
+    
     /// Builds a remote-only facade for a selected provider.
+
+    pub fn media(&self) -> crate::repository::MediaRepository<'_> {
+        crate::repository::MediaRepository { conn: &self.conn }
+    }
+
+    pub fn episodes(&self) -> crate::repository::EpisodeRepository<'_> {
+        crate::repository::EpisodeRepository { conn: &self.conn }
+    }
+
+    pub fn search_repo(&self) -> crate::repository::SearchRepository<'_> {
+        crate::repository::SearchRepository { conn: &self.conn }
+    }
+
+    pub fn sync_state(&self) -> crate::repository::SyncStateRepository<'_> {
+        crate::repository::SyncStateRepository { conn: &self.conn }
+    }
+
     pub fn remote(source: RemoteSource) -> RemoteApi {
         RemoteApi::from(source)
     }
@@ -128,281 +182,6 @@ impl AnimeDb {
         &self.conn
     }
 
-    pub fn upsert_media(&mut self, media: &CanonicalMedia) -> Result<i64> {
-        media.validate()?;
-        let tx = self.conn.transaction()?;
-        let media_id = upsert_media_in_tx(&tx, media)?;
-        tx.commit()?;
-        Ok(media_id)
-    }
-
-    pub fn get_media(&self, media_id: i64) -> Result<StoredMedia> {
-        let row = self
-            .conn
-            .query_row(
-                r#"
-                SELECT
-                    id,
-                    media_kind,
-                    title_display,
-                    title_romaji,
-                    title_english,
-                    title_native,
-                    synopsis,
-                    format,
-                    status,
-                    season,
-                    season_year,
-                    episodes,
-                    chapters,
-                    volumes,
-                    country_of_origin,
-                    cover_image,
-                    banner_image,
-                    provider_rating,
-                    nsfw,
-                    tags_json,
-                    genres_json
-                FROM media
-                WHERE id = ?1
-                "#,
-                params![media_id],
-                |row| {
-                    let media_kind = parse_media_kind(row.get_ref(1)?.as_str()?)
-                        .map_err(|err| rusqlite_decode_error(1, err))?;
-                    let tags = serde_json::from_str(&row.get::<_, String>(19)?)
-                        .map_err(|err| rusqlite_decode_error(19, err))?;
-                    let genres = serde_json::from_str(&row.get::<_, String>(20)?)
-                        .map_err(|err| rusqlite_decode_error(20, err))?;
-
-                    Ok(StoredMedia {
-                        id: row.get(0)?,
-                        media_kind,
-                        title_display: row.get(2)?,
-                        title_romaji: row.get(3)?,
-                        title_english: row.get(4)?,
-                        title_native: row.get(5)?,
-                        synopsis: row.get(6)?,
-                        format: row.get(7)?,
-                        status: row.get(8)?,
-                        season: row.get(9)?,
-                        season_year: row.get(10)?,
-                        episodes: row.get(11)?,
-                        chapters: row.get(12)?,
-                        volumes: row.get(13)?,
-                        country_of_origin: row.get(14)?,
-                        cover_image: row.get(15)?,
-                        banner_image: row.get(16)?,
-                        provider_rating: row.get(17)?,
-                        nsfw: row.get::<_, i64>(18)? != 0,
-                        aliases: Vec::new(),
-                        tags,
-                        genres,
-                        external_ids: Vec::new(),
-                        source_payloads: Vec::new(),
-                        field_provenance: Vec::new(),
-                    })
-                },
-            )
-            .optional()?
-            .ok_or(Error::NotFound)?;
-
-        let aliases = self.load_aliases(media_id)?;
-        let external_ids = self.load_external_ids(media_id)?;
-        let source_payloads = self.load_source_payloads(media_id)?;
-        let field_provenance = self.load_field_provenance(media_id)?;
-
-        Ok(StoredMedia {
-            aliases,
-            external_ids,
-            source_payloads,
-            field_provenance,
-            ..row
-        })
-    }
-
-    pub fn get_by_external_id(&self, source: SourceName, source_id: &str) -> Result<StoredMedia> {
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT media_id FROM media_external_id WHERE source = ?1 AND source_id = ?2 ORDER BY media_id",
-        )?;
-        let media_ids = stmt
-            .query_map(params![source.as_str(), source_id], |row| {
-                row.get::<_, i64>(0)
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-
-        let media_id = match media_ids.as_slice() {
-            [] => return Err(Error::NotFound),
-            [media_id] => *media_id,
-            _ => {
-                return Err(Error::Validation(format!(
-                    "external id {}:{} is ambiguous across media kinds; use a kind-aware query",
-                    source, source_id
-                )));
-            }
-        };
-
-        self.get_media(media_id)
-    }
-
-    pub fn get_by_external_id_and_kind(
-        &self,
-        source: SourceName,
-        media_kind: MediaKind,
-        source_id: &str,
-    ) -> Result<StoredMedia> {
-        let media_id = self
-            .conn
-            .query_row(
-                "SELECT media_id FROM media_external_id WHERE source = ?1 AND media_kind = ?2 AND source_id = ?3",
-                params![source.as_str(), media_kind.as_str(), source_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-            .ok_or(Error::NotFound)?;
-
-        self.get_media(media_id)
-    }
-
-    pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
-        let fts_query = build_fts_query(query)?;
-        let limit = options.limit.max(1) as i64;
-        let offset = options.offset as i64;
-        let format = options
-            .format
-            .clone()
-            .map(|value| value.to_ascii_uppercase());
-
-        let mut statement =
-            if let (Some(kind), Some(format)) = (options.media_kind, format.as_ref()) {
-                self.conn
-                    .prepare(
-                        r#"
-                SELECT
-                    m.id,
-                    m.media_kind,
-                    m.title_display,
-                    m.synopsis,
-                    -bm25(media_fts) AS score
-                FROM media_fts
-                INNER JOIN media m ON m.id = media_fts.media_id
-                WHERE media_fts MATCH ?1
-                  AND m.media_kind = ?2
-                  AND UPPER(COALESCE(m.format, '')) = ?3
-                ORDER BY bm25(media_fts)
-                LIMIT ?4 OFFSET ?5
-                "#,
-                    )?
-                    .query_map(
-                        params![fts_query, kind.as_str(), format, limit, offset],
-                        |row| {
-                            let media_kind = parse_media_kind(row.get_ref(1)?.as_str()?)
-                                .map_err(|err| rusqlite_decode_error(1, err))?;
-                            Ok(SearchHit {
-                                media_id: row.get(0)?,
-                                media_kind,
-                                title_display: row.get(2)?,
-                                synopsis: row.get(3)?,
-                                score: row.get(4)?,
-                            })
-                        },
-                    )?
-                    .collect::<std::result::Result<Vec<_>, _>>()?
-            } else if let Some(kind) = options.media_kind {
-                self.conn
-                    .prepare(
-                        r#"
-                SELECT
-                    m.id,
-                    m.media_kind,
-                    m.title_display,
-                    m.synopsis,
-                    -bm25(media_fts) AS score
-                FROM media_fts
-                INNER JOIN media m ON m.id = media_fts.media_id
-                WHERE media_fts MATCH ?1
-                  AND m.media_kind = ?2
-                ORDER BY bm25(media_fts)
-                LIMIT ?3 OFFSET ?4
-                "#,
-                    )?
-                    .query_map(params![fts_query, kind.as_str(), limit, offset], |row| {
-                        let media_kind = parse_media_kind(row.get_ref(1)?.as_str()?)
-                            .map_err(|err| rusqlite_decode_error(1, err))?;
-                        Ok(SearchHit {
-                            media_id: row.get(0)?,
-                            media_kind,
-                            title_display: row.get(2)?,
-                            synopsis: row.get(3)?,
-                            score: row.get(4)?,
-                        })
-                    })?
-                    .collect::<std::result::Result<Vec<_>, _>>()?
-            } else if let Some(format) = format.as_ref() {
-                self.conn
-                    .prepare(
-                        r#"
-                SELECT
-                    m.id,
-                    m.media_kind,
-                    m.title_display,
-                    m.synopsis,
-                    -bm25(media_fts) AS score
-                FROM media_fts
-                INNER JOIN media m ON m.id = media_fts.media_id
-                WHERE media_fts MATCH ?1
-                  AND UPPER(COALESCE(m.format, '')) = ?2
-                ORDER BY bm25(media_fts)
-                LIMIT ?3 OFFSET ?4
-                "#,
-                    )?
-                    .query_map(params![fts_query, format, limit, offset], |row| {
-                        let media_kind = parse_media_kind(row.get_ref(1)?.as_str()?)
-                            .map_err(|err| rusqlite_decode_error(1, err))?;
-                        Ok(SearchHit {
-                            media_id: row.get(0)?,
-                            media_kind,
-                            title_display: row.get(2)?,
-                            synopsis: row.get(3)?,
-                            score: row.get(4)?,
-                        })
-                    })?
-                    .collect::<std::result::Result<Vec<_>, _>>()?
-            } else {
-                self.conn
-                    .prepare(
-                        r#"
-                SELECT
-                    m.id,
-                    m.media_kind,
-                    m.title_display,
-                    m.synopsis,
-                    -bm25(media_fts) AS score
-                FROM media_fts
-                INNER JOIN media m ON m.id = media_fts.media_id
-                WHERE media_fts MATCH ?1
-                ORDER BY bm25(media_fts)
-                LIMIT ?2 OFFSET ?3
-                "#,
-                    )?
-                    .query_map(params![fts_query, limit, offset], |row| {
-                        let media_kind = parse_media_kind(row.get_ref(1)?.as_str()?)
-                            .map_err(|err| rusqlite_decode_error(1, err))?;
-                        Ok(SearchHit {
-                            media_id: row.get(0)?,
-                            media_kind,
-                            title_display: row.get(2)?,
-                            synopsis: row.get(3)?,
-                            score: row.get(4)?,
-                        })
-                    })?
-                    .collect::<std::result::Result<Vec<_>, _>>()?
-            };
-
-        statement.sort_by(|left, right| right.score.total_cmp(&left.score));
-        Ok(statement)
-    }
-
     pub fn anime_metadata(&self) -> MetadataCollection<'_> {
         MetadataCollection::new(
             self,
@@ -448,7 +227,8 @@ impl AnimeDb {
             .start_cursor
             .clone()
             .or_else(|| {
-                self.load_sync_state(request.source, &scope)
+                self.sync_state()
+                    .load_sync_state(request.source, &scope)
                     .ok()
                     .and_then(|state| state.cursor)
             })
@@ -462,7 +242,7 @@ impl AnimeDb {
         while fetched_pages < max_pages {
             let page = provider.fetch_page(&request, cursor.clone())?;
             if page.items.is_empty() {
-                self.save_sync_state(PersistedSyncState {
+                self.sync_state().save_sync_state(PersistedSyncState {
                     source: request.source,
                     scope: scope.clone(),
                     cursor: last_cursor.clone(),
@@ -475,14 +255,14 @@ impl AnimeDb {
             }
 
             for item in &page.items {
-                self.upsert_media(item)?;
+                crate::repository::MediaRepository::upsert_media(&mut self.conn, item)?;
                 upserted_records += 1;
             }
 
             fetched_pages += 1;
             last_cursor = Some(cursor.clone());
 
-            self.save_sync_state(PersistedSyncState {
+            self.sync_state().save_sync_state(PersistedSyncState {
                 source: request.source,
                 scope: scope.clone(),
                 cursor: page.next_cursor.clone(),
@@ -555,548 +335,20 @@ impl AnimeDb {
         })
     }
 
-    pub fn load_sync_state(&self, source: SourceName, scope: &str) -> Result<PersistedSyncState> {
-        self.conn
-            .query_row(
-                r#"
-                SELECT source, scope, cursor_json, last_success_at, last_error, last_page, mode
-                FROM sync_state
-                WHERE source = ?1 AND scope = ?2
-                "#,
-                params![source.as_str(), scope],
-                |row| {
-                    let source = parse_source(row.get_ref(0)?.as_str()?)
-                        .map_err(|err| rusqlite_decode_error(0, err))?;
-                    let scope = row.get::<_, String>(1)?;
-                    let cursor = row
-                        .get::<_, Option<String>>(2)?
-                        .map(|value| serde_json::from_str::<SyncCursor>(&value))
-                        .transpose()
-                        .map_err(|err| rusqlite_decode_error(2, err))?;
-                    let mode_str: String = row.get(6)?;
-                    let mode = match mode_str.as_str() {
-                        "full" => SyncMode::Full,
-                        "incremental" => SyncMode::Incremental,
-                        other => {
-                            return Err(rusqlite_decode_error(
-                                6,
-                                Error::Validation(format!("unsupported sync mode: {other}")),
-                            ));
-                        }
-                    };
-
-                    Ok(PersistedSyncState {
-                        source,
-                        scope,
-                        cursor,
-                        last_success_at: row.get(3)?,
-                        last_error: row.get(4)?,
-                        last_page: row.get(5)?,
-                        mode,
-                    })
-                },
-            )
-            .optional()?
-            .ok_or(Error::NotFound)
-    }
-
-    pub fn save_sync_state(&self, state: PersistedSyncState) -> Result<()> {
-        let cursor_json = state
-            .cursor
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-
-        self.conn.execute(
-            r#"
-            INSERT INTO sync_state (
-                source,
-                scope,
-                cursor_json,
-                last_success_at,
-                last_error,
-                last_page,
-                mode
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            ON CONFLICT(source, scope) DO UPDATE SET
-                cursor_json = excluded.cursor_json,
-                last_success_at = excluded.last_success_at,
-                last_error = excluded.last_error,
-                last_page = excluded.last_page,
-                mode = excluded.mode
-            "#,
-            params![
-                state.source.as_str(),
-                state.scope,
-                cursor_json,
-                state.last_success_at,
-                state.last_error,
-                state.last_page,
-                state.mode.as_str(),
-            ],
-        )?;
-
-        Ok(())
-    }
-
-    fn load_aliases(&self, media_id: i64) -> Result<Vec<String>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT alias FROM media_alias WHERE media_id = ?1 ORDER BY alias")?;
-        let rows = stmt.query_map(params![media_id], |row| row.get::<_, String>(0))?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Error::from)
-    }
-
-    fn load_external_ids(&self, media_id: i64) -> Result<Vec<ExternalId>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT source, source_id, url FROM media_external_id WHERE media_id = ?1 ORDER BY source",
-        )?;
-        let rows = stmt.query_map(params![media_id], |row| {
-            let source = parse_source(row.get_ref(0)?.as_str()?)
-                .map_err(|err| rusqlite_decode_error(0, err))?;
-            Ok(ExternalId {
-                source,
-                source_id: row.get(1)?,
-                url: row.get(2)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Error::from)
-    }
-
-    fn load_source_payloads(&self, media_id: i64) -> Result<Vec<SourcePayload>> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT source, source_id, url, remote_updated_at, raw_json
-            FROM source_record
-            WHERE media_id = ?1
-            ORDER BY source
-            "#,
-        )?;
-        let rows = stmt.query_map(params![media_id], |row| {
-            let raw_json = row
-                .get::<_, Option<String>>(4)?
-                .map(|value| serde_json::from_str::<Value>(&value))
-                .transpose()
-                .map_err(|err| rusqlite_decode_error(4, err))?;
-            let source = parse_source(row.get_ref(0)?.as_str()?)
-                .map_err(|err| rusqlite_decode_error(0, err))?;
-            Ok(SourcePayload {
-                source,
-                source_id: row.get(1)?,
-                url: row.get(2)?,
-                remote_updated_at: row.get(3)?,
-                raw_json,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Error::from)
-    }
-
-    fn load_field_provenance(&self, media_id: i64) -> Result<Vec<FieldProvenance>> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT field_name, source, source_id, score, reason, updated_at
-            FROM field_provenance
-            WHERE media_id = ?1
-            ORDER BY field_name
-            "#,
-        )?;
-        let rows = stmt.query_map(params![media_id], |row| {
-            let source = parse_source(row.get_ref(1)?.as_str()?)
-                .map_err(|err| rusqlite_decode_error(1, err))?;
-            Ok(FieldProvenance {
-                field_name: row.get(0)?,
-                source,
-                source_id: row.get(2)?,
-                score: row.get(3)?,
-                reason: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Error::from)
-    }
-
     /// Inserts a source episode record, then merges to update canonical episodes.
-    pub fn upsert_episode_source_record(
-        &mut self,
-        episode: &CanonicalEpisode,
-        media_id: i64,
-    ) -> Result<i64> {
-        let titles_json = episode
-            .raw_titles_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-        let raw_json = episode
-            .raw_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-
-        self.conn.execute(
-            r#"
-            INSERT INTO episode_source_record (
-                source, source_id, media_id, media_kind,
-                season_number, episode_number, absolute_number,
-                title_display, title_original, titles_json,
-                synopsis, air_date, runtime_minutes, thumbnail_url,
-                raw_json, fetched_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
-            ON CONFLICT(source, source_id, media_id) DO UPDATE SET
-                season_number = excluded.season_number,
-                episode_number = excluded.episode_number,
-                absolute_number = excluded.absolute_number,
-                title_display = excluded.title_display,
-                title_original = excluded.title_original,
-                titles_json = excluded.titles_json,
-                synopsis = excluded.synopsis,
-                air_date = excluded.air_date,
-                runtime_minutes = excluded.runtime_minutes,
-                thumbnail_url = excluded.thumbnail_url,
-                raw_json = excluded.raw_json,
-                fetched_at = CURRENT_TIMESTAMP
-            "#,
-            params![
-                episode.source.as_str(),
-                episode.source_id,
-                media_id,
-                episode.media_kind.as_str(),
-                episode.season_number,
-                episode.episode_number,
-                episode.absolute_number,
-                episode.title_display,
-                episode.title_original,
-                titles_json,
-                episode.synopsis,
-                episode.air_date,
-                episode.runtime_minutes,
-                episode.thumbnail_url,
-                raw_json,
-            ],
-        )?;
-
-        let source_record_id = self.conn.last_insert_rowid();
-
-        // Merge source records into canonical episodes
-        self.merge_episodes_for_media(media_id)?;
-
-        Ok(source_record_id)
-    }
 
     /// Backward-compatible alias for `upsert_episode_source_record`.
     #[allow(dead_code)]
-    pub fn upsert_episode(&mut self, episode: &CanonicalEpisode, media_id: i64) -> Result<i64> {
-        self.upsert_episode_source_record(episode, media_id)
-    }
 
     /// Merges all source records for a media item into canonical episodes.
     ///
     /// Groups by `media_id + absolute_number` (fallback: `media_id + season_number + episode_number`),
     /// picks field values from highest-priority provider (AniList > IMDb > TVmaze > Jikan > Kitsu).
-    pub fn merge_episodes_for_media(&mut self, media_id: i64) -> Result<()> {
-        // Load all source records for this media
-        let records = {
-            let mut stmt = self.conn.prepare(
-                r#"
-                SELECT
-                    id, episode_id, source, source_id, media_id, media_kind,
-                    season_number, episode_number, absolute_number,
-                    title_display, title_original, titles_json,
-                    synopsis, air_date, runtime_minutes, thumbnail_url,
-                    raw_json, fetched_at
-                FROM episode_source_record
-                WHERE media_id = ?1
-                "#,
-            )?;
-            stmt.query_map(params![media_id], |row| {
-                let source = parse_source(row.get_ref(2)?.as_str()?)
-                    .map_err(|e| rusqlite_decode_error(2, e))?;
-                let media_kind = parse_media_kind(row.get_ref(5)?.as_str()?)
-                    .map_err(|e| rusqlite_decode_error(5, e))?;
-                let titles_json = row
-                    .get::<_, Option<String>>(11)?
-                    .map(|value| serde_json::from_str::<Value>(&value).ok())
-                    .flatten();
-                let raw_json = row
-                    .get::<_, Option<String>>(16)?
-                    .map(|value| serde_json::from_str::<Value>(&value).ok())
-                    .flatten();
-                Ok(EpisodeSourceRecord {
-                    id: row.get(0)?,
-                    episode_id: row.get(1)?,
-                    source,
-                    source_id: row.get(3)?,
-                    media_id: row.get(4)?,
-                    media_kind,
-                    season_number: row.get(6)?,
-                    episode_number: row.get(7)?,
-                    absolute_number: row.get(8)?,
-                    title_display: row.get(9)?,
-                    title_original: row.get(10)?,
-                    titles_json,
-                    synopsis: row.get(12)?,
-                    air_date: row.get(13)?,
-                    runtime_minutes: row.get(14)?,
-                    thumbnail_url: row.get(15)?,
-                    raw_json,
-                    fetched_at: row.get(17)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Error::from)?
-        };
-
-        if records.is_empty() {
-            return Ok(());
-        }
-
-        // Group records by episode identity
-        let mut groups: HashMap<String, Vec<EpisodeSourceRecord>> = HashMap::new();
-        for record in records {
-            let key = if let Some(abs) = record.absolute_number {
-                format!("{}:abs:{}", record.media_id, abs)
-            } else {
-                format!(
-                    "{}:se:{}:{}",
-                    record.media_id,
-                    record.season_number.unwrap_or(0),
-                    record.episode_number.unwrap_or(0)
-                )
-            };
-            groups.entry(key).or_insert_with(Vec::new).push(record);
-        }
-
-        // For each group, merge and upsert canonical
-        for (_, group) in groups {
-            let canonical = merge_episode_source_records(&group);
-            let episode_id = self.upsert_canonical_episode(&canonical, group[0].media_id)?;
-
-            // Update episode_id back-references in source records
-            for record in &group {
-                self.conn.execute(
-                    "UPDATE episode_source_record SET episode_id = ?1 WHERE id = ?2",
-                    params![episode_id, record.id],
-                )?;
-            }
-        }
-
-        Ok(())
-    }
 
     /// Inserts or updates a canonical episode.
     /// Uses simple "find or insert" strategy since canonical episodes don't have a strong identity key.
-    fn upsert_canonical_episode(&mut self, episode: &StoredEpisode, media_id: i64) -> Result<i64> {
-        let titles_json = episode
-            .titles_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-
-        // Check if episode exists for this media with same numbering
-        let existing_id: Option<i64> = self
-            .conn
-            .query_row(
-                r#"
-                SELECT id FROM episode
-                WHERE media_id = ?1
-                  AND COALESCE(season_number, 0) = COALESCE(?2, 0)
-                  AND COALESCE(episode_number, 0) = COALESCE(?3, 0)
-                  AND COALESCE(absolute_number, 0) = COALESCE(?4, 0)
-                LIMIT 1
-                "#,
-                params![
-                    media_id,
-                    episode.season_number,
-                    episode.episode_number,
-                    episode.absolute_number
-                ],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        if let Some(id) = existing_id {
-            self.conn.execute(
-                r#"
-                UPDATE episode SET
-                    season_number = ?2,
-                    episode_number = ?3,
-                    absolute_number = ?4,
-                    title_display = ?5,
-                    title_original = ?6,
-                    titles_json = ?7,
-                    synopsis = ?8,
-                    air_date = ?9,
-                    runtime_minutes = ?10,
-                    thumbnail_url = ?11,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?1
-                "#,
-                params![
-                    id,
-                    episode.season_number,
-                    episode.episode_number,
-                    episode.absolute_number,
-                    episode.title_display,
-                    episode.title_original,
-                    titles_json,
-                    episode.synopsis,
-                    episode.air_date,
-                    episode.runtime_minutes,
-                    episode.thumbnail_url,
-                ],
-            )?;
-            Ok(id)
-        } else {
-            self.conn.execute(
-                r#"
-                INSERT INTO episode (
-                    media_id, season_number, episode_number, absolute_number,
-                    title_display, title_original, titles_json,
-                    synopsis, air_date, runtime_minutes, thumbnail_url,
-                    updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
-                "#,
-                params![
-                    media_id,
-                    episode.season_number,
-                    episode.episode_number,
-                    episode.absolute_number,
-                    episode.title_display,
-                    episode.title_original,
-                    titles_json,
-                    episode.synopsis,
-                    episode.air_date,
-                    episode.runtime_minutes,
-                    episode.thumbnail_url,
-                ],
-            )?;
-            Ok(self.conn.last_insert_rowid())
-        }
-    }
-
-    pub fn episodes_for_media(&self, media_id: i64) -> Result<Vec<StoredEpisode>> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT
-                id, media_id, season_number, episode_number, absolute_number,
-                title_display, title_original, titles_json,
-                synopsis, air_date, runtime_minutes, thumbnail_url
-            FROM episode
-            WHERE media_id = ?1
-            ORDER BY
-                COALESCE(season_number, 0),
-                COALESCE(episode_number, 0),
-                COALESCE(absolute_number, 0)
-            "#,
-        )?;
-        let rows = stmt.query_map(params![media_id], parse_stored_episode)?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Error::from)
-    }
 
     /// Returns all source episode records for a media item (for audit/debug).
-    pub fn episode_source_records_for_media(
-        &self,
-        media_id: i64,
-    ) -> Result<Vec<EpisodeSourceRecord>> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT
-                id, episode_id, source, source_id, media_id, media_kind,
-                season_number, episode_number, absolute_number,
-                title_display, title_original, titles_json,
-                synopsis, air_date, runtime_minutes, thumbnail_url,
-                raw_json, fetched_at
-            FROM episode_source_record
-            WHERE media_id = ?1
-            ORDER BY source, absolute_number
-            "#,
-        )?;
-        let rows = stmt.query_map(params![media_id], |row| {
-            let source =
-                parse_source(row.get_ref(2)?.as_str()?).map_err(|e| rusqlite_decode_error(2, e))?;
-            let media_kind = parse_media_kind(row.get_ref(5)?.as_str()?)
-                .map_err(|e| rusqlite_decode_error(5, e))?;
-            let titles_json = row
-                .get::<_, Option<String>>(11)?
-                .map(|value| serde_json::from_str::<Value>(&value).ok())
-                .flatten();
-            let raw_json = row
-                .get::<_, Option<String>>(16)?
-                .map(|value| serde_json::from_str::<Value>(&value).ok())
-                .flatten();
-            Ok(EpisodeSourceRecord {
-                id: row.get(0)?,
-                episode_id: row.get(1)?,
-                source,
-                source_id: row.get(3)?,
-                media_id: row.get(4)?,
-                media_kind,
-                season_number: row.get(6)?,
-                episode_number: row.get(7)?,
-                absolute_number: row.get(8)?,
-                title_display: row.get(9)?,
-                title_original: row.get(10)?,
-                titles_json,
-                synopsis: row.get(12)?,
-                air_date: row.get(13)?,
-                runtime_minutes: row.get(14)?,
-                thumbnail_url: row.get(15)?,
-                raw_json,
-                fetched_at: row.get(17)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Error::from)
-    }
-
-    pub fn episode_by_absolute_number(
-        &self,
-        media_id: i64,
-        absolute_number: i32,
-    ) -> Result<Option<StoredEpisode>> {
-        self.conn
-            .query_row(
-                r#"
-                SELECT
-                    id, media_id, season_number, episode_number, absolute_number,
-                    title_display, title_original, titles_json,
-                    synopsis, air_date, runtime_minutes, thumbnail_url
-                FROM episode
-                WHERE media_id = ?1 AND absolute_number = ?2
-                "#,
-                params![media_id, absolute_number],
-                parse_stored_episode,
-            )
-            .optional()
-            .map_err(Error::from)
-    }
-
-    pub fn episode_by_season_episode(
-        &self,
-        media_id: i64,
-        season_number: i32,
-        episode_number: i32,
-    ) -> Result<Option<StoredEpisode>> {
-        self.conn
-            .query_row(
-                r#"
-                SELECT
-                    id, media_id, season_number, episode_number, absolute_number,
-                    title_display, title_original, titles_json,
-                    synopsis, air_date, runtime_minutes, thumbnail_url
-                FROM episode
-                WHERE media_id = ?1 AND season_number = ?2 AND episode_number = ?3
-                "#,
-                params![media_id, season_number, episode_number],
-                parse_stored_episode,
-            )
-            .optional()
-            .map_err(Error::from)
-    }
 
     pub fn fetch_and_store_episodes(
         &mut self,
@@ -1122,46 +374,24 @@ impl AnimeDb {
         source_id: &str,
     ) -> Result<Vec<StoredEpisode>> {
         let media = self
+            .media()
             .get_by_external_id_and_kind(source, MediaKind::Anime, source_id)
-            .or_else(|_| self.get_by_external_id_and_kind(source, MediaKind::Show, source_id))?;
+            .or_else(|_| {
+                self.media()
+                    .get_by_external_id_and_kind(source, MediaKind::Show, source_id)
+            })?;
 
         let episodes = provider.fetch_episodes(media.media_kind, source_id)?;
 
         for episode in &episodes {
-            self.upsert_episode_source_record(episode, media.id)?;
+            self.episodes()
+                .upsert_episode_source_record(episode, media.id)?;
         }
 
         // Merge all source records into canonical episodes
-        self.merge_episodes_for_media(media.id)?;
+        self.episodes().merge_episodes_for_media(media.id)?;
 
-        self.episodes_for_media(media.id)
-    }
-
-    pub fn media_document_by_id(&self, media_id: i64) -> Result<MediaDocument> {
-        let media = self.get_media(media_id)?;
-        let episodes = self.episodes_for_media(media_id)?;
-        Ok(MediaDocument { media, episodes })
-    }
-
-    pub fn media_document_by_external_id(
-        &self,
-        source: SourceName,
-        source_id: &str,
-    ) -> Result<MediaDocument> {
-        let media = self.get_by_external_id(source, source_id)?;
-        let episodes = self.episodes_for_media(media.id)?;
-        Ok(MediaDocument { media, episodes })
-    }
-
-    pub fn media_document_by_external_id_and_kind(
-        &self,
-        source: SourceName,
-        media_kind: MediaKind,
-        source_id: &str,
-    ) -> Result<MediaDocument> {
-        let media = self.get_by_external_id_and_kind(source, media_kind, source_id)?;
-        let episodes = self.episodes_for_media(media.id)?;
-        Ok(MediaDocument { media, episodes })
+        self.episodes().episodes_for_media(media.id)
     }
 }
 
@@ -1195,6 +425,7 @@ impl<'a> MetadataCollection<'a> {
     pub fn by_external_id(&self, source: SourceName, source_id: &str) -> Result<StoredMedia> {
         let media = if let Some(kind) = self.options.media_kind {
             self.db
+                .media()
                 .get_by_external_id_and_kind(source, kind, source_id)?
         } else {
             self.db.get_by_external_id(source, source_id)?
@@ -1227,883 +458,6 @@ impl<'a> MetadataCollection<'a> {
     }
 }
 
-fn upsert_media_in_tx(tx: &Transaction<'_>, media: &CanonicalMedia) -> Result<i64> {
-    let existing_media_id = resolve_media_id(tx, media.media_kind, &media.external_ids)?;
-    ensure_no_conflicts(tx, media.media_kind, existing_media_id, &media.external_ids)?;
-    let existing = existing_media_id
-        .map(|media_id| load_stored_media_in_tx(tx, media_id))
-        .transpose()?;
-    let merged = merge_media(existing.as_ref(), media);
-    let tags_json = serde_json::to_string(&merged.tags)?;
-    let genres_json = serde_json::to_string(&merged.genres)?;
-
-    let media_id = if let Some(media_id) = existing_media_id {
-        tx.execute(
-            r#"
-            UPDATE media
-            SET
-                media_kind = ?2,
-                title_display = ?3,
-                title_romaji = ?4,
-                title_english = ?5,
-                title_native = ?6,
-                synopsis = ?7,
-                format = ?8,
-                status = ?9,
-                season = ?10,
-                season_year = ?11,
-                episodes = ?12,
-                chapters = ?13,
-                volumes = ?14,
-                country_of_origin = ?15,
-                cover_image = ?16,
-                banner_image = ?17,
-                provider_rating = ?18,
-                nsfw = ?19,
-                tags_json = ?20,
-                genres_json = ?21,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?1
-            "#,
-            params![
-                media_id,
-                merged.media_kind.as_str(),
-                merged.title_display,
-                merged.title_romaji,
-                merged.title_english,
-                merged.title_native,
-                merged.synopsis,
-                merged.format,
-                merged.status,
-                merged.season,
-                merged.season_year,
-                merged.episodes,
-                merged.chapters,
-                merged.volumes,
-                merged.country_of_origin,
-                merged.cover_image,
-                merged.banner_image,
-                merged.provider_rating,
-                i64::from(merged.nsfw as i32),
-                tags_json,
-                genres_json,
-            ],
-        )?;
-        media_id
-    } else {
-        tx.execute(
-            r#"
-            INSERT INTO media (
-                media_kind,
-                title_display,
-                title_romaji,
-                title_english,
-                title_native,
-                synopsis,
-                format,
-                status,
-                season,
-                season_year,
-                episodes,
-                chapters,
-                volumes,
-                country_of_origin,
-                cover_image,
-                banner_image,
-                provider_rating,
-                nsfw,
-                tags_json,
-                genres_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
-            "#,
-            params![
-                merged.media_kind.as_str(),
-                merged.title_display,
-                merged.title_romaji,
-                merged.title_english,
-                merged.title_native,
-                merged.synopsis,
-                merged.format,
-                merged.status,
-                merged.season,
-                merged.season_year,
-                merged.episodes,
-                merged.chapters,
-                merged.volumes,
-                merged.country_of_origin,
-                merged.cover_image,
-                merged.banner_image,
-                merged.provider_rating,
-                i64::from(merged.nsfw as i32),
-                tags_json,
-                genres_json,
-            ],
-        )?;
-        tx.last_insert_rowid()
-    };
-
-    tx.execute(
-        "DELETE FROM media_alias WHERE media_id = ?1",
-        params![media_id],
-    )?;
-    for alias in normalize_aliases(&merged.aliases) {
-        tx.execute(
-            r#"
-            INSERT INTO media_alias (media_id, alias, normalized_alias)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(media_id, normalized_alias) DO NOTHING
-            "#,
-            params![media_id, alias, normalize_for_lookup(&alias)],
-        )?;
-    }
-
-    for external_id in &merged.external_ids {
-        tx.execute(
-            r#"
-            INSERT INTO media_external_id (media_id, media_kind, source, source_id, url)
-            VALUES (?1, ?2, ?3, ?4, ?5)
-            ON CONFLICT(source, media_kind, source_id) DO UPDATE SET
-                media_id = excluded.media_id,
-                url = excluded.url
-            "#,
-            params![
-                media_id,
-                merged.media_kind.as_str(),
-                external_id.source.as_str(),
-                external_id.source_id,
-                external_id.url,
-            ],
-        )?;
-    }
-
-    for payload in &merged.source_payloads {
-        let raw_json = payload
-            .raw_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-        let payload_hash = raw_json
-            .as_ref()
-            .map(|value| stable_payload_hash(value))
-            .transpose()?;
-
-        tx.execute(
-            r#"
-            INSERT INTO source_record (
-                media_id,
-                media_kind,
-                source,
-                source_id,
-                url,
-                remote_updated_at,
-                fetched_at,
-                raw_json,
-                payload_hash
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP, ?7, ?8)
-            ON CONFLICT(source, media_kind, source_id) DO UPDATE SET
-                media_id = excluded.media_id,
-                url = excluded.url,
-                remote_updated_at = excluded.remote_updated_at,
-                fetched_at = CURRENT_TIMESTAMP,
-                raw_json = excluded.raw_json,
-                payload_hash = excluded.payload_hash
-            "#,
-            params![
-                media_id,
-                merged.media_kind.as_str(),
-                payload.source.as_str(),
-                payload.source_id,
-                payload.url,
-                payload.remote_updated_at,
-                raw_json,
-                payload_hash,
-            ],
-        )?;
-    }
-
-    tx.execute(
-        "DELETE FROM field_provenance WHERE media_id = ?1",
-        params![media_id],
-    )?;
-    for provenance in &merged.field_provenance {
-        tx.execute(
-            r#"
-            INSERT INTO field_provenance (
-                media_id,
-                field_name,
-                source,
-                source_id,
-                score,
-                reason,
-                updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-            params![
-                media_id,
-                provenance.field_name,
-                provenance.source.as_str(),
-                provenance.source_id,
-                provenance.score,
-                provenance.reason,
-                provenance.updated_at,
-            ],
-        )?;
-    }
-
-    tx.execute(
-        "DELETE FROM media_fts WHERE media_id = ?1",
-        params![media_id],
-    )?;
-    tx.execute(
-        r#"
-        INSERT INTO media_fts (media_id, title_display, aliases, synopsis)
-        VALUES (?1, ?2, ?3, ?4)
-        "#,
-        params![
-            media_id,
-            merged.title_display,
-            normalize_aliases(&merged.aliases).join(" "),
-            merged.synopsis,
-        ],
-    )?;
-
-    Ok(media_id)
-}
-
-fn load_stored_media_in_tx(tx: &Transaction<'_>, media_id: i64) -> Result<StoredMedia> {
-    let row = tx
-        .query_row(
-            r#"
-            SELECT
-                id,
-                media_kind,
-                title_display,
-                title_romaji,
-                title_english,
-                title_native,
-                synopsis,
-                format,
-                status,
-                season,
-                season_year,
-                episodes,
-                chapters,
-                volumes,
-                country_of_origin,
-                cover_image,
-                banner_image,
-                provider_rating,
-                nsfw,
-                tags_json,
-                genres_json
-            FROM media
-            WHERE id = ?1
-            "#,
-            params![media_id],
-            |row| {
-                let media_kind = parse_media_kind(row.get_ref(1)?.as_str()?)
-                    .map_err(|err| rusqlite_decode_error(1, err))?;
-                let tags = serde_json::from_str(&row.get::<_, String>(19)?)
-                    .map_err(|err| rusqlite_decode_error(19, err))?;
-                let genres = serde_json::from_str(&row.get::<_, String>(20)?)
-                    .map_err(|err| rusqlite_decode_error(20, err))?;
-
-                Ok(StoredMedia {
-                    id: row.get(0)?,
-                    media_kind,
-                    title_display: row.get(2)?,
-                    title_romaji: row.get(3)?,
-                    title_english: row.get(4)?,
-                    title_native: row.get(5)?,
-                    synopsis: row.get(6)?,
-                    format: row.get(7)?,
-                    status: row.get(8)?,
-                    season: row.get(9)?,
-                    season_year: row.get(10)?,
-                    episodes: row.get(11)?,
-                    chapters: row.get(12)?,
-                    volumes: row.get(13)?,
-                    country_of_origin: row.get(14)?,
-                    cover_image: row.get(15)?,
-                    banner_image: row.get(16)?,
-                    provider_rating: row.get(17)?,
-                    nsfw: row.get::<_, i64>(18)? != 0,
-                    aliases: Vec::new(),
-                    genres,
-                    tags,
-                    external_ids: Vec::new(),
-                    source_payloads: Vec::new(),
-                    field_provenance: Vec::new(),
-                })
-            },
-        )
-        .optional()?
-        .ok_or(Error::NotFound)?;
-
-    let aliases = {
-        let mut stmt =
-            tx.prepare("SELECT alias FROM media_alias WHERE media_id = ?1 ORDER BY alias")?;
-        let rows = stmt.query_map(params![media_id], |row| row.get::<_, String>(0))?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
-
-    let external_ids = {
-        let mut stmt = tx.prepare(
-            "SELECT source, source_id, url FROM media_external_id WHERE media_id = ?1 ORDER BY source",
-        )?;
-        let rows = stmt.query_map(params![media_id], |row| {
-            let source = parse_source(row.get_ref(0)?.as_str()?)
-                .map_err(|err| rusqlite_decode_error(0, err))?;
-            Ok(ExternalId {
-                source,
-                source_id: row.get(1)?,
-                url: row.get(2)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
-
-    let source_payloads = {
-        let mut stmt = tx.prepare(
-            r#"
-            SELECT source, source_id, url, remote_updated_at, raw_json
-            FROM source_record
-            WHERE media_id = ?1
-            ORDER BY source
-            "#,
-        )?;
-        let rows = stmt.query_map(params![media_id], |row| {
-            let raw_json = row
-                .get::<_, Option<String>>(4)?
-                .map(|value| serde_json::from_str::<Value>(&value))
-                .transpose()
-                .map_err(|err| rusqlite_decode_error(4, err))?;
-            let source = parse_source(row.get_ref(0)?.as_str()?)
-                .map_err(|err| rusqlite_decode_error(0, err))?;
-            Ok(SourcePayload {
-                source,
-                source_id: row.get(1)?,
-                url: row.get(2)?,
-                remote_updated_at: row.get(3)?,
-                raw_json,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
-
-    let field_provenance = {
-        let mut stmt = tx.prepare(
-            r#"
-            SELECT field_name, source, source_id, score, reason, updated_at
-            FROM field_provenance
-            WHERE media_id = ?1
-            ORDER BY field_name
-            "#,
-        )?;
-        let rows = stmt.query_map(params![media_id], |row| {
-            let source = parse_source(row.get_ref(1)?.as_str()?)
-                .map_err(|err| rusqlite_decode_error(1, err))?;
-            Ok(FieldProvenance {
-                field_name: row.get(0)?,
-                source,
-                source_id: row.get(2)?,
-                score: row.get(3)?,
-                reason: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
-
-    Ok(StoredMedia {
-        aliases,
-        external_ids,
-        source_payloads,
-        field_provenance,
-        ..row
-    })
-}
-
-fn merge_media(existing: Option<&StoredMedia>, incoming: &CanonicalMedia) -> CanonicalMedia {
-    let origin = incoming_origin(incoming);
-    let existing_scores = existing_score_map(existing);
-    let mut provenance = Vec::new();
-
-    let title_display = choose_text(
-        "title_display",
-        existing.map(|item| item.title_display.as_str()),
-        existing_scores.get("title_display"),
-        Some(incoming.title_display.as_str()),
-        incoming,
-        &origin,
-        &mut provenance,
-    )
-    .unwrap_or_else(|| incoming.title_display.clone());
-
-    let title_romaji = choose_text(
-        "title_romaji",
-        existing.and_then(|item| item.title_romaji.as_deref()),
-        existing_scores.get("title_romaji"),
-        incoming.title_romaji.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let title_english = choose_text(
-        "title_english",
-        existing.and_then(|item| item.title_english.as_deref()),
-        existing_scores.get("title_english"),
-        incoming.title_english.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let title_native = choose_text(
-        "title_native",
-        existing.and_then(|item| item.title_native.as_deref()),
-        existing_scores.get("title_native"),
-        incoming.title_native.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let synopsis = choose_text(
-        "synopsis",
-        existing.and_then(|item| item.synopsis.as_deref()),
-        existing_scores.get("synopsis"),
-        incoming.synopsis.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let format = choose_text(
-        "format",
-        existing.and_then(|item| item.format.as_deref()),
-        existing_scores.get("format"),
-        incoming.format.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let status = choose_text(
-        "status",
-        existing.and_then(|item| item.status.as_deref()),
-        existing_scores.get("status"),
-        incoming.status.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let season = choose_text(
-        "season",
-        existing.and_then(|item| item.season.as_deref()),
-        existing_scores.get("season"),
-        incoming.season.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let country_of_origin = choose_text(
-        "country_of_origin",
-        existing.and_then(|item| item.country_of_origin.as_deref()),
-        existing_scores.get("country_of_origin"),
-        incoming.country_of_origin.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-
-    let season_year = choose_i32(
-        "season_year",
-        existing.and_then(|item| item.season_year),
-        existing_scores.get("season_year"),
-        incoming.season_year,
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let episodes = choose_i32(
-        "episodes",
-        existing.and_then(|item| item.episodes),
-        existing_scores.get("episodes"),
-        incoming.episodes,
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let chapters = choose_i32(
-        "chapters",
-        existing.and_then(|item| item.chapters),
-        existing_scores.get("chapters"),
-        incoming.chapters,
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let volumes = choose_i32(
-        "volumes",
-        existing.and_then(|item| item.volumes),
-        existing_scores.get("volumes"),
-        incoming.volumes,
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-
-    let cover_image = choose_cover(
-        "cover_image",
-        existing.and_then(|item| item.cover_image.as_deref()),
-        existing_scores.get("cover_image"),
-        incoming.cover_image.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let banner_image = choose_cover(
-        "banner_image",
-        existing.and_then(|item| item.banner_image.as_deref()),
-        existing_scores.get("banner_image"),
-        incoming.banner_image.as_deref(),
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let nsfw = choose_bool(
-        "nsfw",
-        existing.map(|item| item.nsfw),
-        existing_scores.get("nsfw"),
-        incoming.nsfw,
-        incoming,
-        &origin,
-        &mut provenance,
-    );
-    let provider_rating = choose_rating(
-        existing.and_then(|item| item.provider_rating),
-        incoming.provider_rating,
-    );
-
-    CanonicalMedia {
-        media_kind: existing
-            .map(|item| item.media_kind)
-            .unwrap_or(incoming.media_kind),
-        title_display,
-        title_romaji,
-        title_english,
-        title_native,
-        synopsis,
-        format,
-        status,
-        season,
-        season_year,
-        episodes,
-        chapters,
-        volumes,
-        country_of_origin,
-        cover_image,
-        banner_image,
-        provider_rating,
-        nsfw,
-        aliases: merge_string_lists(
-            existing.map(|item| item.aliases.as_slice()),
-            &incoming.aliases,
-        ),
-        genres: merge_string_lists(
-            existing.map(|item| item.genres.as_slice()),
-            &incoming.genres,
-        ),
-        tags: merge_string_lists(existing.map(|item| item.tags.as_slice()), &incoming.tags),
-        external_ids: merge_external_ids(
-            existing.map(|item| item.external_ids.as_slice()),
-            &incoming.external_ids,
-        ),
-        source_payloads: merge_source_payloads(
-            existing.map(|item| item.source_payloads.as_slice()),
-            &incoming.source_payloads,
-        ),
-        field_provenance: provenance,
-    }
-}
-
-fn resolve_media_id(
-    tx: &Transaction<'_>,
-    media_kind: MediaKind,
-    external_ids: &[ExternalId],
-) -> Result<Option<i64>> {
-    for external_id in external_ids {
-        let media_id = tx
-            .query_row(
-                "SELECT media_id FROM media_external_id WHERE source = ?1 AND media_kind = ?2 AND source_id = ?3",
-                params![
-                    external_id.source.as_str(),
-                    media_kind.as_str(),
-                    external_id.source_id
-                ],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?;
-        if media_id.is_some() {
-            return Ok(media_id);
-        }
-    }
-    Ok(None)
-}
-
-fn ensure_no_conflicts(
-    tx: &Transaction<'_>,
-    media_kind: MediaKind,
-    expected_media_id: Option<i64>,
-    external_ids: &[ExternalId],
-) -> Result<()> {
-    for external_id in external_ids {
-        let found_media_id = tx
-            .query_row(
-                "SELECT media_id FROM media_external_id WHERE source = ?1 AND media_kind = ?2 AND source_id = ?3",
-                params![
-                    external_id.source.as_str(),
-                    media_kind.as_str(),
-                    external_id.source_id
-                ],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?;
-
-        if let (Some(expected), Some(found)) = (expected_media_id, found_media_id)
-            && expected != found
-        {
-            return Err(Error::ConflictingExternalId {
-                provider: external_id.source.to_string(),
-                source_id: external_id.source_id.clone(),
-            });
-        }
-    }
-
-    Ok(())
-}
-
-fn incoming_origin(media: &CanonicalMedia) -> (SourceName, String) {
-    if let Some(payload) = media.source_payloads.first() {
-        return (payload.source, payload.source_id.clone());
-    }
-    if let Some(external_id) = media.external_ids.first() {
-        return (external_id.source, external_id.source_id.clone());
-    }
-    (SourceName::AniList, "unknown".to_string())
-}
-
-fn existing_score_map(existing: Option<&StoredMedia>) -> HashMap<String, FieldProvenance> {
-    existing
-        .map(|item| {
-            item.field_provenance
-                .iter()
-                .cloned()
-                .map(|entry| (entry.field_name.clone(), entry))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn choose_text(
-    field_name: &str,
-    existing_value: Option<&str>,
-    existing_provenance: Option<&FieldProvenance>,
-    incoming_value: Option<&str>,
-    incoming: &CanonicalMedia,
-    origin: &(SourceName, String),
-    provenance: &mut Vec<FieldProvenance>,
-) -> Option<String> {
-    match (existing_value, incoming_value) {
-        (Some(existing), Some(candidate)) => {
-            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
-            let incoming_decision = score_text_field(origin.0, field_name, candidate, incoming);
-            if incoming_decision.score >= existing_score {
-                provenance.push(make_provenance(
-                    field_name,
-                    origin.0,
-                    origin.1.as_str(),
-                    incoming_decision.score,
-                    incoming_decision.reason,
-                ));
-                Some(incoming_decision.value)
-            } else {
-                if let Some(entry) = existing_provenance.cloned() {
-                    provenance.push(entry);
-                }
-                Some(existing.to_string())
-            }
-        }
-        (None, Some(candidate)) => {
-            let incoming_decision = score_text_field(origin.0, field_name, candidate, incoming);
-            provenance.push(make_provenance(
-                field_name,
-                origin.0,
-                origin.1.as_str(),
-                incoming_decision.score,
-                incoming_decision.reason,
-            ));
-            Some(incoming_decision.value)
-        }
-        (Some(existing), None) => {
-            if let Some(entry) = existing_provenance.cloned() {
-                provenance.push(entry);
-            }
-            Some(existing.to_string())
-        }
-        (None, None) => None,
-    }
-}
-
-fn choose_i32(
-    field_name: &str,
-    existing_value: Option<i32>,
-    existing_provenance: Option<&FieldProvenance>,
-    incoming_value: Option<i32>,
-    incoming: &CanonicalMedia,
-    origin: &(SourceName, String),
-    provenance: &mut Vec<FieldProvenance>,
-) -> Option<i32> {
-    match (existing_value, incoming_value) {
-        (Some(existing), Some(candidate)) => {
-            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
-            let incoming_decision = score_optional_i32(origin.0, candidate, incoming);
-            if incoming_decision.score >= existing_score {
-                provenance.push(make_provenance(
-                    field_name,
-                    origin.0,
-                    origin.1.as_str(),
-                    incoming_decision.score,
-                    incoming_decision.reason,
-                ));
-                Some(incoming_decision.value)
-            } else {
-                if let Some(entry) = existing_provenance.cloned() {
-                    provenance.push(entry);
-                }
-                Some(existing)
-            }
-        }
-        (None, Some(candidate)) => {
-            let incoming_decision = score_optional_i32(origin.0, candidate, incoming);
-            provenance.push(make_provenance(
-                field_name,
-                origin.0,
-                origin.1.as_str(),
-                incoming_decision.score,
-                incoming_decision.reason,
-            ));
-            Some(incoming_decision.value)
-        }
-        (Some(existing), None) => {
-            if let Some(entry) = existing_provenance.cloned() {
-                provenance.push(entry);
-            }
-            Some(existing)
-        }
-        (None, None) => None,
-    }
-}
-
-fn choose_cover(
-    field_name: &str,
-    existing_value: Option<&str>,
-    existing_provenance: Option<&FieldProvenance>,
-    incoming_value: Option<&str>,
-    incoming: &CanonicalMedia,
-    origin: &(SourceName, String),
-    provenance: &mut Vec<FieldProvenance>,
-) -> Option<String> {
-    match (existing_value, incoming_value) {
-        (Some(existing), Some(candidate)) => {
-            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
-            let incoming_decision = score_cover_image(origin.0, candidate, incoming);
-            if incoming_decision.score >= existing_score {
-                provenance.push(make_provenance(
-                    field_name,
-                    origin.0,
-                    origin.1.as_str(),
-                    incoming_decision.score,
-                    incoming_decision.reason,
-                ));
-                Some(incoming_decision.value)
-            } else {
-                if let Some(entry) = existing_provenance.cloned() {
-                    provenance.push(entry);
-                }
-                Some(existing.to_string())
-            }
-        }
-        (None, Some(candidate)) => {
-            let incoming_decision = score_cover_image(origin.0, candidate, incoming);
-            provenance.push(make_provenance(
-                field_name,
-                origin.0,
-                origin.1.as_str(),
-                incoming_decision.score,
-                incoming_decision.reason,
-            ));
-            Some(incoming_decision.value)
-        }
-        (Some(existing), None) => {
-            if let Some(entry) = existing_provenance.cloned() {
-                provenance.push(entry);
-            }
-            Some(existing.to_string())
-        }
-        (None, None) => None,
-    }
-}
-
-fn choose_bool(
-    field_name: &str,
-    existing_value: Option<bool>,
-    existing_provenance: Option<&FieldProvenance>,
-    incoming_value: bool,
-    incoming: &CanonicalMedia,
-    origin: &(SourceName, String),
-    provenance: &mut Vec<FieldProvenance>,
-) -> bool {
-    match existing_value {
-        Some(existing) => {
-            let existing_score = existing_provenance.map(|item| item.score).unwrap_or(0.60);
-            let incoming_decision = score_boolean(origin.0, incoming_value, incoming);
-            if incoming_decision.score >= existing_score {
-                provenance.push(make_provenance(
-                    field_name,
-                    origin.0,
-                    origin.1.as_str(),
-                    incoming_decision.score,
-                    incoming_decision.reason,
-                ));
-                incoming_decision.value
-            } else {
-                if let Some(entry) = existing_provenance.cloned() {
-                    provenance.push(entry);
-                }
-                existing
-            }
-        }
-        None => {
-            let incoming_decision = score_boolean(origin.0, incoming_value, incoming);
-            provenance.push(make_provenance(
-                field_name,
-                origin.0,
-                origin.1.as_str(),
-                incoming_decision.score,
-                incoming_decision.reason,
-            ));
-            incoming_decision.value
-        }
-    }
-}
-
-fn choose_rating(existing_value: Option<f64>, incoming_value: Option<f64>) -> Option<f64> {
-    match (existing_value, incoming_value) {
-        (Some(existing), Some(candidate)) => Some(existing.max(candidate)),
-        (None, Some(candidate)) => Some(candidate),
-        (Some(existing), None) => Some(existing),
-        (None, None) => None,
-    }
-}
-
 fn make_provenance(
     field_name: &str,
     source: SourceName,
@@ -2121,251 +475,10 @@ fn make_provenance(
     }
 }
 
-fn merge_string_lists(existing: Option<&[String]>, incoming: &[String]) -> Vec<String> {
-    let mut values = Vec::new();
-    for value in existing.into_iter().flatten() {
-        if !values
-            .iter()
-            .any(|item: &String| item.eq_ignore_ascii_case(value))
-        {
-            values.push(value.clone());
-        }
-    }
-    for value in incoming {
-        if !values
-            .iter()
-            .any(|item: &String| item.eq_ignore_ascii_case(value))
-        {
-            values.push(value.clone());
-        }
-    }
-    values
-}
-
-fn merge_external_ids(existing: Option<&[ExternalId]>, incoming: &[ExternalId]) -> Vec<ExternalId> {
-    let mut values = Vec::new();
-    for item in existing.into_iter().flatten() {
-        if !values.iter().any(|value: &ExternalId| {
-            value.source == item.source && value.source_id == item.source_id
-        }) {
-            values.push(item.clone());
-        }
-    }
-    for item in incoming {
-        if !values.iter().any(|value: &ExternalId| {
-            value.source == item.source && value.source_id == item.source_id
-        }) {
-            values.push(item.clone());
-        }
-    }
-    values
-}
-
-fn merge_source_payloads(
-    existing: Option<&[SourcePayload]>,
-    incoming: &[SourcePayload],
-) -> Vec<SourcePayload> {
-    let mut values = Vec::new();
-    for item in existing.into_iter().flatten() {
-        if !values.iter().any(|value: &SourcePayload| {
-            value.source == item.source && value.source_id == item.source_id
-        }) {
-            values.push(item.clone());
-        }
-    }
-    for item in incoming {
-        if let Some(existing_item) = values.iter_mut().find(|value: &&mut SourcePayload| {
-            value.source == item.source && value.source_id == item.source_id
-        }) {
-            *existing_item = item.clone();
-        } else {
-            values.push(item.clone());
-        }
-    }
-    values
-}
-
-fn parse_media_kind(value: &str) -> Result<MediaKind> {
-    value.parse()
-}
-
-fn parse_source(value: &str) -> Result<SourceName> {
-    value.parse()
-}
-
 /// Provider priority for episode merge (higher = more preferred).
-fn episode_provider_priority(source: SourceName) -> u8 {
-    match source {
-        SourceName::AniList => 5,
-        SourceName::MyAnimeList => 4,
-        SourceName::Jikan => 3,
-        SourceName::Kitsu => 2,
-        SourceName::Tvmaze => 4,
-        SourceName::Imdb => 5,
-    }
-}
 
 /// Merges a group of source records into a single canonical episode.
 /// Uses provider priority to resolve field conflicts.
-fn merge_episode_source_records(records: &[EpisodeSourceRecord]) -> StoredEpisode {
-    // Sort by priority descending
-    let mut sorted = records.to_vec();
-    sorted.sort_by_key(|r| episode_provider_priority(r.source));
-    let highest = &sorted[0];
-
-    fn pick<T: Clone>(values: &[(Option<T>, SourceName)]) -> Option<T> {
-        // Sort by priority descending and take the last (highest priority)
-        let mut with_prio: Vec<_> = values
-            .iter()
-            .filter_map(|(v, s)| v.as_ref().map(|val| (val, *s)))
-            .collect();
-        with_prio.sort_by_key(|(_, s)| episode_provider_priority(*s));
-        with_prio.last().map(|(v, _)| (*v).clone())
-    }
-
-    let title_display = pick(
-        &sorted
-            .iter()
-            .map(|r| (r.title_display.clone(), r.source))
-            .collect::<Vec<_>>(),
-    );
-    let title_original = pick(
-        &sorted
-            .iter()
-            .map(|r| (r.title_original.clone(), r.source))
-            .collect::<Vec<_>>(),
-    );
-    let synopsis = pick(
-        &sorted
-            .iter()
-            .map(|r| (r.synopsis.clone(), r.source))
-            .collect::<Vec<_>>(),
-    );
-    let air_date = pick(
-        &sorted
-            .iter()
-            .map(|r| (r.air_date.clone(), r.source))
-            .collect::<Vec<_>>(),
-    );
-    let runtime_minutes = pick(
-        &sorted
-            .iter()
-            .map(|r| (r.runtime_minutes, r.source))
-            .collect::<Vec<_>>(),
-    );
-    let thumbnail_url = pick(
-        &sorted
-            .iter()
-            .map(|r| (r.thumbnail_url.clone(), r.source))
-            .collect::<Vec<_>>(),
-    );
-    let titles_json = highest.titles_json.clone();
-
-    StoredEpisode {
-        id: 0, // Will be assigned on insert
-        media_id: highest.media_id,
-        season_number: highest.season_number,
-        episode_number: highest.episode_number,
-        absolute_number: highest.absolute_number,
-        title_display,
-        title_original,
-        titles_json,
-        synopsis,
-        air_date,
-        runtime_minutes,
-        thumbnail_url,
-    }
-}
-
-fn parse_stored_episode(
-    row: &rusqlite::Row<'_>,
-) -> std::result::Result<StoredEpisode, rusqlite::Error> {
-    let titles_json = row
-        .get::<_, Option<String>>(7)?
-        .map(|value| serde_json::from_str::<Value>(&value).ok())
-        .flatten();
-
-    Ok(StoredEpisode {
-        id: row.get(0)?,
-        media_id: row.get(1)?,
-        season_number: row.get(2)?,
-        episode_number: row.get(3)?,
-        absolute_number: row.get(4)?,
-        title_display: row.get(5)?,
-        title_original: row.get(6)?,
-        titles_json,
-        synopsis: row.get(8)?,
-        air_date: row.get(9)?,
-        runtime_minutes: row.get(10)?,
-        thumbnail_url: row.get(11)?,
-    })
-}
-
-fn normalize_aliases(aliases: &[String]) -> Vec<String> {
-    let mut result = Vec::new();
-    for alias in aliases {
-        let trimmed = alias.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if !result
-            .iter()
-            .any(|item: &String| item.eq_ignore_ascii_case(trimmed))
-        {
-            result.push(trimmed.to_string());
-        }
-    }
-    result
-}
-
-fn normalize_for_lookup(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_alphanumeric() || ch.is_whitespace() {
-                ch.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn build_fts_query(query: &str) -> Result<String> {
-    let normalized = normalize_for_lookup(query);
-    let mut terms = Vec::new();
-    for token in normalized.split_whitespace() {
-        if token.is_empty() {
-            continue;
-        }
-        let term = if token.chars().count() > 1 {
-            format!("{token}*")
-        } else {
-            token.to_string()
-        };
-        terms.push(term);
-    }
-
-    if terms.is_empty() {
-        return Err(Error::Validation("search query cannot be empty".into()));
-    }
-
-    Ok(terms.join(" "))
-}
-
-fn stable_payload_hash(payload: &str) -> Result<String> {
-    Ok(payload.len().to_string())
-}
-
-fn rusqlite_decode_error(
-    column: usize,
-    err: impl StdError + Send + Sync + 'static,
-) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(column, rusqlite::types::Type::Text, Box::new(err))
-}
 
 fn now_string() -> String {
     let unix = std::time::SystemTime::now()
@@ -2481,6 +594,7 @@ mod tests {
         let mut db = AnimeDb::open_in_memory().expect("in-memory db");
         let media_id = db.upsert_media(&sample_media()).expect("upsert");
         let loaded = db
+            .media()
             .get_by_external_id(SourceName::AniList, "19")
             .expect("lookup");
 
@@ -2495,6 +609,7 @@ mod tests {
         db.upsert_media(&sample_media()).expect("upsert");
 
         let hits = db
+            .search_repo()
             .search(
                 "serial killer europe",
                 SearchOptions {
@@ -2697,6 +812,7 @@ mod tests {
         db.upsert_media(&show).expect("upsert show");
 
         let show_hits = db
+            .search_repo()
             .search(
                 "teacher",
                 SearchOptions {
@@ -2713,6 +829,7 @@ mod tests {
         assert_eq!(show_hits[0].media_kind, MediaKind::Show);
 
         let anime_hits = db
+            .search_repo()
             .search(
                 "surgeon",
                 SearchOptions {
@@ -2814,12 +931,14 @@ mod tests {
             field_provenance: Vec::new(),
         };
 
-        let first_id = db.upsert_media(&tvmaze_show).expect("upsert tvmaze");
+        let first_id = db.upsert_media(&tvmaze_show)
+            .expect("upsert tvmaze");
         let second_id = db.upsert_media(&imdb_show).expect("upsert imdb");
 
         assert_eq!(first_id, second_id);
 
         let loaded = db
+            .media()
             .get_by_external_id(SourceName::Imdb, "tt0903747")
             .expect("lookup by imdb");
 
@@ -2925,11 +1044,13 @@ mod tests {
         assert_ne!(show_id, movie_id);
 
         let show_loaded = db
+            .media()
             .get_by_external_id_and_kind(SourceName::Imdb, MediaKind::Show, "tt11111")
             .expect("lookup show by kind");
         assert_eq!(show_loaded.media_kind, MediaKind::Show);
 
         let movie_loaded = db
+            .media()
             .get_by_external_id_and_kind(SourceName::Imdb, MediaKind::Movie, "tt22222")
             .expect("lookup movie by kind");
         assert_eq!(movie_loaded.media_kind, MediaKind::Movie);
@@ -2957,6 +1078,7 @@ mod tests {
         db.upsert_media(&movie).expect("upsert movie");
 
         let movie_hits = db
+            .search_repo()
             .search(
                 "office",
                 SearchOptions {
@@ -2973,6 +1095,7 @@ mod tests {
         assert_eq!(movie_hits[0].title_display, "The Office Space");
 
         let show_hits = db
+            .search_repo()
             .search(
                 "office",
                 SearchOptions {
@@ -3011,6 +1134,7 @@ mod tests {
         db.upsert_media(&movie).expect("upsert movie");
 
         let all_hits = db
+            .search_repo()
             .search(
                 "dark",
                 SearchOptions {
@@ -3137,7 +1261,8 @@ mod tests {
             )
         };
 
-        let first = db.upsert_media(&tvmaze_entry).expect("upsert tvmaze");
+        let first = db.upsert_media(&tvmaze_entry)
+            .expect("upsert tvmaze");
         let second = db.upsert_media(&imdb_entry).expect("upsert imdb");
         assert_eq!(first, second);
 
@@ -3285,17 +1410,22 @@ mod tests {
         };
 
         let ep_id = db
+            .episodes()
             .upsert_episode(&episode, media_id)
             .expect("upsert episode");
         assert!(ep_id > 0);
 
-        let episodes = db.episodes_for_media(media_id).expect("list episodes");
+        let episodes = db
+            .episodes()
+            .episodes_for_media(media_id)
+            .expect("list episodes");
         assert_eq!(episodes.len(), 1);
         assert_eq!(episodes[0].episode_number, Some(1));
         assert_eq!(episodes[0].title_display.as_deref(), Some("The Hospital"));
 
         // Verify source records are stored
         let source_records = db
+            .episodes()
             .episode_source_records_for_media(media_id)
             .expect("source records");
         assert_eq!(source_records.len(), 1);
@@ -3330,7 +1460,8 @@ mod tests {
             raw_json: None,
         };
 
-        db.upsert_episode(&episode1, media_id)
+        db.episodes()
+            .upsert_episode(&episode1, media_id)
             .expect("upsert first");
 
         let episode2 = CanonicalEpisode {
@@ -3350,10 +1481,14 @@ mod tests {
             raw_json: None,
         };
 
-        db.upsert_episode(&episode2, media_id)
+        db.episodes()
+            .upsert_episode(&episode2, media_id)
             .expect("upsert second");
 
-        let episodes = db.episodes_for_media(media_id).expect("list episodes");
+        let episodes = db
+            .episodes()
+            .episodes_for_media(media_id)
+            .expect("list episodes");
         assert_eq!(episodes.len(), 1);
         assert_eq!(episodes[0].title_display.as_deref(), Some("Updated Title"));
         assert_eq!(episodes[0].synopsis.as_deref(), Some("Updated synopsis."));
@@ -3404,10 +1539,15 @@ mod tests {
             raw_json: None,
         };
 
-        db.upsert_episode(&ep1, media_id).expect("upsert ep1");
-        db.upsert_episode(&ep2, media_id).expect("upsert ep2");
+        db.episodes()
+            .upsert_episode(&ep1, media_id)
+            .expect("upsert ep1");
+        db.episodes()
+            .upsert_episode(&ep2, media_id)
+            .expect("upsert ep2");
 
         let found = db
+            .episodes()
             .episode_by_absolute_number(media_id, 2)
             .expect("find by absolute");
         assert_eq!(found.unwrap().episode_number, Some(2));
@@ -3447,6 +1587,7 @@ mod tests {
         db.upsert_episode(&ep, media_id).expect("upsert");
 
         let found = db
+            .episodes()
             .episode_by_season_episode(media_id, 1, 5)
             .expect("find by season/episode");
         let found = found.unwrap();
@@ -3483,9 +1624,14 @@ mod tests {
             raw_json: None,
         };
 
-        db.upsert_episode(&ep1, media_id).expect("upsert ep");
+        db.episodes()
+            .upsert_episode(&ep1, media_id)
+            .expect("upsert ep");
 
-        let doc = db.media_document_by_id(media_id).expect("get doc");
+        let doc = db
+            .search_repo()
+            .media_document_by_id(media_id)
+            .expect("get doc");
         assert_eq!(doc.media.title_display, "Monster");
         assert_eq!(doc.media.episodes, Some(74));
         assert_eq!(doc.episodes.len(), 1);
@@ -3507,6 +1653,7 @@ mod tests {
         db.upsert_media(&media).expect("upsert media");
 
         let doc = db
+            .search_repo()
             .media_document_by_external_id(SourceName::Kitsu, "1")
             .expect("get doc by external id");
         assert_eq!(doc.media.title_display, "Monster");

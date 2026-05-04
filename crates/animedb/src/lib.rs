@@ -32,6 +32,7 @@ mod merge;
 mod model;
 pub mod provider;
 mod remote;
+pub mod repository;
 #[cfg(feature = "local-db")]
 mod schema;
 
