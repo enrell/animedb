@@ -32,6 +32,8 @@ mod merge;
 mod model;
 pub mod provider;
 mod remote;
+#[cfg(feature = "local-db")]
+mod schema;
 
 // ---------------------------------------------------------------------------
 // Pure data types: always available (no SQLite dependency)
