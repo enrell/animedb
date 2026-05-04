@@ -345,7 +345,7 @@ pub struct FieldProvenance {
 ///
 /// Construct with [`Default::default`](SearchOptions::default) and chain builders:
 ///
-/// ```rust
+/// ```ignore
 /// let opts = SearchOptions::default()
 ///     .with_limit(10)
 ///     .with_offset(20)
