@@ -17,10 +17,11 @@ categories = ["database", "api-bindings", "multimedia"]
 async-graphql = "7"
 async-graphql-axum = "7"
 axum = "0.8"
-reqwest = { version = "0.13", default-features = false, features = [
+reqwest = { version = "0.13.3", default-features = false, features = [
   "blocking",
   "json",
-  "rustls-tls",
+  "rustls",
+  "query",
 ] }
 rusqlite = { version = "0.39", features = ["bundled", "serde_json"] }
 serde = { version = "1", features = ["derive"] }
