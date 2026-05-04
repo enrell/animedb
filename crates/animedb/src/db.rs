@@ -6,8 +6,7 @@ use crate::model::{
 };
 use crate::provider::Provider;
 use crate::remote::{RemoteApi, RemoteSource};
-use crate::repository;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use std::path::Path;
 
 /// Local-first SQLite-backed catalog entry point.
