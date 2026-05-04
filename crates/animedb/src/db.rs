@@ -8,9 +8,10 @@ use std::thread;
 use crate::error::{Error, Result};
 use crate::merge::{score_boolean, score_cover_image, score_optional_i32, score_text_field};
 use crate::model::{
-    CanonicalEpisode, CanonicalMedia, ExternalId, FieldProvenance, MediaDocument, MediaKind,
-    PersistedSyncState, SearchHit, SearchOptions, SourceName, SourcePayload, StoredEpisode,
-    StoredMedia, SyncCursor, SyncMode, SyncOutcome, SyncReport, SyncRequest,
+    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance,
+    MediaDocument, MediaKind, PersistedSyncState, SearchHit, SearchOptions, SourceName,
+    SourcePayload, StoredEpisode, StoredMedia, SyncCursor, SyncMode, SyncOutcome, SyncReport,
+    SyncRequest,
 };
 use crate::provider::{
     AniListProvider, ImdbProvider, JikanProvider, KitsuProvider, Provider, TvmazeProvider,
@@ -1043,6 +1044,71 @@ impl AnimeDb {
             )?;
         }
 
+        if version < 6 {
+            self.conn.execute_batch(
+                r#"
+                BEGIN;
+
+                -- The v5 episode table used source-specific rows directly.
+                -- The new design has canonical episode + episode_source_record.
+                -- We must recreate episode with the canonical schema.
+                DROP TABLE IF EXISTS episode;
+                DROP TABLE IF EXISTS episode_source_record;
+
+                CREATE TABLE episode (
+                    id INTEGER PRIMARY KEY,
+                    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                    season_number INTEGER,
+                    episode_number INTEGER,
+                    absolute_number INTEGER,
+                    title_display TEXT,
+                    title_original TEXT,
+                    titles_json TEXT CHECK(titles_json IS NULL OR json_valid(titles_json)),
+                    synopsis TEXT,
+                    air_date TEXT,
+                    runtime_minutes INTEGER,
+                    thumbnail_url TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE episode_source_record (
+                    id INTEGER PRIMARY KEY,
+                    episode_id INTEGER REFERENCES episode(id) ON DELETE CASCADE,
+                    source TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                    media_kind TEXT NOT NULL CHECK(media_kind IN ('anime', 'manga', 'show', 'movie')),
+                    season_number INTEGER,
+                    episode_number INTEGER,
+                    absolute_number INTEGER,
+                    title_display TEXT,
+                    title_original TEXT,
+                    titles_json TEXT CHECK(titles_json IS NULL OR json_valid(titles_json)),
+                    synopsis TEXT,
+                    air_date TEXT,
+                    runtime_minutes INTEGER,
+                    thumbnail_url TEXT,
+                    raw_json TEXT CHECK(raw_json IS NULL OR json_valid(raw_json)),
+                    fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(source, source_id, media_id)
+                );
+
+                CREATE INDEX episode_source_record_episode_id_idx ON episode_source_record(episode_id);
+                CREATE INDEX episode_source_record_media_id_idx ON episode_source_record(media_id);
+                CREATE INDEX episode_source_record_source_idx ON episode_source_record(source);
+                CREATE INDEX episode_source_record_abs_num_idx ON episode_source_record(media_id, absolute_number);
+                CREATE INDEX episode_source_record_season_ep_idx ON episode_source_record(media_id, season_number, episode_number);
+                CREATE INDEX episode_media_id_idx ON episode(media_id);
+                CREATE INDEX episode_absolute_number_idx ON episode(media_id, absolute_number);
+                CREATE INDEX episode_season_episode_idx ON episode(media_id, season_number, episode_number);
+
+                PRAGMA user_version = 6;
+                COMMIT;
+                "#,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1126,8 +1192,13 @@ impl AnimeDb {
             .map_err(Error::from)
     }
 
-    pub fn upsert_episode(&mut self, episode: &CanonicalEpisode, media_id: i64) -> Result<i64> {
-        let raw_titles_json = episode
+    /// Inserts a source episode record, then merges to update canonical episodes.
+    pub fn upsert_episode_source_record(
+        &mut self,
+        episode: &CanonicalEpisode,
+        media_id: i64,
+    ) -> Result<i64> {
+        let titles_json = episode
             .raw_titles_json
             .as_ref()
             .map(serde_json::to_string)
@@ -1140,27 +1211,26 @@ impl AnimeDb {
 
         self.conn.execute(
             r#"
-            INSERT INTO episode (
+            INSERT INTO episode_source_record (
                 source, source_id, media_id, media_kind,
                 season_number, episode_number, absolute_number,
-                title_display, title_original, synopsis,
-                air_date, runtime_minutes, thumbnail_url,
-                raw_titles_json, raw_json,
-                updated_at
+                title_display, title_original, titles_json,
+                synopsis, air_date, runtime_minutes, thumbnail_url,
+                raw_json, fetched_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
-            ON CONFLICT(source, media_kind, source_id, media_id) DO UPDATE SET
+            ON CONFLICT(source, source_id, media_id) DO UPDATE SET
                 season_number = excluded.season_number,
                 episode_number = excluded.episode_number,
                 absolute_number = excluded.absolute_number,
                 title_display = excluded.title_display,
                 title_original = excluded.title_original,
+                titles_json = excluded.titles_json,
                 synopsis = excluded.synopsis,
                 air_date = excluded.air_date,
                 runtime_minutes = excluded.runtime_minutes,
                 thumbnail_url = excluded.thumbnail_url,
-                raw_titles_json = excluded.raw_titles_json,
                 raw_json = excluded.raw_json,
-                updated_at = CURRENT_TIMESTAMP
+                fetched_at = CURRENT_TIMESTAMP
             "#,
             params![
                 episode.source.as_str(),
@@ -1172,28 +1242,221 @@ impl AnimeDb {
                 episode.absolute_number,
                 episode.title_display,
                 episode.title_original,
+                titles_json,
                 episode.synopsis,
                 episode.air_date,
                 episode.runtime_minutes,
                 episode.thumbnail_url,
-                raw_titles_json,
                 raw_json,
             ],
         )?;
 
-        let id = self.conn.last_insert_rowid();
-        Ok(id)
+        let source_record_id = self.conn.last_insert_rowid();
+
+        // Merge source records into canonical episodes
+        self.merge_episodes_for_media(media_id)?;
+
+        Ok(source_record_id)
+    }
+
+    /// Backward-compatible alias for `upsert_episode_source_record`.
+    #[allow(dead_code)]
+    pub fn upsert_episode(&mut self, episode: &CanonicalEpisode, media_id: i64) -> Result<i64> {
+        self.upsert_episode_source_record(episode, media_id)
+    }
+
+    /// Merges all source records for a media item into canonical episodes.
+    ///
+    /// Groups by `media_id + absolute_number` (fallback: `media_id + season_number + episode_number`),
+    /// picks field values from highest-priority provider (AniList > IMDb > TVmaze > Jikan > Kitsu).
+    pub fn merge_episodes_for_media(&mut self, media_id: i64) -> Result<()> {
+        // Load all source records for this media
+        let records = {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT
+                    id, episode_id, source, source_id, media_id, media_kind,
+                    season_number, episode_number, absolute_number,
+                    title_display, title_original, titles_json,
+                    synopsis, air_date, runtime_minutes, thumbnail_url,
+                    raw_json, fetched_at
+                FROM episode_source_record
+                WHERE media_id = ?1
+                "#,
+            )?;
+            stmt.query_map(params![media_id], |row| {
+                let source = parse_source(row.get_ref(2)?.as_str()?)
+                    .map_err(|e| rusqlite_decode_error(2, e))?;
+                let media_kind = parse_media_kind(row.get_ref(5)?.as_str()?)
+                    .map_err(|e| rusqlite_decode_error(5, e))?;
+                let titles_json = row
+                    .get::<_, Option<String>>(11)?
+                    .map(|value| serde_json::from_str::<Value>(&value).ok())
+                    .flatten();
+                let raw_json = row
+                    .get::<_, Option<String>>(16)?
+                    .map(|value| serde_json::from_str::<Value>(&value).ok())
+                    .flatten();
+                Ok(EpisodeSourceRecord {
+                    id: row.get(0)?,
+                    episode_id: row.get(1)?,
+                    source,
+                    source_id: row.get(3)?,
+                    media_id: row.get(4)?,
+                    media_kind,
+                    season_number: row.get(6)?,
+                    episode_number: row.get(7)?,
+                    absolute_number: row.get(8)?,
+                    title_display: row.get(9)?,
+                    title_original: row.get(10)?,
+                    titles_json,
+                    synopsis: row.get(12)?,
+                    air_date: row.get(13)?,
+                    runtime_minutes: row.get(14)?,
+                    thumbnail_url: row.get(15)?,
+                    raw_json,
+                    fetched_at: row.get(17)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)?
+        };
+
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        // Group records by episode identity
+        let mut groups: HashMap<String, Vec<EpisodeSourceRecord>> = HashMap::new();
+        for record in records {
+            let key = if let Some(abs) = record.absolute_number {
+                format!("{}:abs:{}", record.media_id, abs)
+            } else {
+                format!(
+                    "{}:se:{}:{}",
+                    record.media_id,
+                    record.season_number.unwrap_or(0),
+                    record.episode_number.unwrap_or(0)
+                )
+            };
+            groups.entry(key).or_insert_with(Vec::new).push(record);
+        }
+
+        // For each group, merge and upsert canonical
+        for (_, group) in groups {
+            let canonical = merge_episode_source_records(&group);
+            let episode_id = self.upsert_canonical_episode(&canonical, group[0].media_id)?;
+
+            // Update episode_id back-references in source records
+            for record in &group {
+                self.conn.execute(
+                    "UPDATE episode_source_record SET episode_id = ?1 WHERE id = ?2",
+                    params![episode_id, record.id],
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Inserts or updates a canonical episode.
+    /// Uses simple "find or insert" strategy since canonical episodes don't have a strong identity key.
+    fn upsert_canonical_episode(&mut self, episode: &StoredEpisode, media_id: i64) -> Result<i64> {
+        let titles_json = episode
+            .titles_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+
+        // Check if episode exists for this media with same numbering
+        let existing_id: Option<i64> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT id FROM episode
+                WHERE media_id = ?1
+                  AND COALESCE(season_number, 0) = COALESCE(?2, 0)
+                  AND COALESCE(episode_number, 0) = COALESCE(?3, 0)
+                  AND COALESCE(absolute_number, 0) = COALESCE(?4, 0)
+                LIMIT 1
+                "#,
+                params![
+                    media_id,
+                    episode.season_number,
+                    episode.episode_number,
+                    episode.absolute_number
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(id) = existing_id {
+            self.conn.execute(
+                r#"
+                UPDATE episode SET
+                    season_number = ?2,
+                    episode_number = ?3,
+                    absolute_number = ?4,
+                    title_display = ?5,
+                    title_original = ?6,
+                    titles_json = ?7,
+                    synopsis = ?8,
+                    air_date = ?9,
+                    runtime_minutes = ?10,
+                    thumbnail_url = ?11,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?1
+                "#,
+                params![
+                    id,
+                    episode.season_number,
+                    episode.episode_number,
+                    episode.absolute_number,
+                    episode.title_display,
+                    episode.title_original,
+                    titles_json,
+                    episode.synopsis,
+                    episode.air_date,
+                    episode.runtime_minutes,
+                    episode.thumbnail_url,
+                ],
+            )?;
+            Ok(id)
+        } else {
+            self.conn.execute(
+                r#"
+                INSERT INTO episode (
+                    media_id, season_number, episode_number, absolute_number,
+                    title_display, title_original, titles_json,
+                    synopsis, air_date, runtime_minutes, thumbnail_url,
+                    updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                "#,
+                params![
+                    media_id,
+                    episode.season_number,
+                    episode.episode_number,
+                    episode.absolute_number,
+                    episode.title_display,
+                    episode.title_original,
+                    titles_json,
+                    episode.synopsis,
+                    episode.air_date,
+                    episode.runtime_minutes,
+                    episode.thumbnail_url,
+                ],
+            )?;
+            Ok(self.conn.last_insert_rowid())
+        }
     }
 
     pub fn episodes_for_media(&self, media_id: i64) -> Result<Vec<StoredEpisode>> {
         let mut stmt = self.conn.prepare(
             r#"
             SELECT
-                id, source, source_id, media_id, media_kind,
-                season_number, episode_number, absolute_number,
-                title_display, title_original, synopsis,
-                air_date, runtime_minutes, thumbnail_url,
-                raw_titles_json, raw_json
+                id, media_id, season_number, episode_number, absolute_number,
+                title_display, title_original, titles_json,
+                synopsis, air_date, runtime_minutes, thumbnail_url
             FROM episode
             WHERE media_id = ?1
             ORDER BY
@@ -1207,6 +1470,62 @@ impl AnimeDb {
             .map_err(Error::from)
     }
 
+    /// Returns all source episode records for a media item (for audit/debug).
+    pub fn episode_source_records_for_media(
+        &self,
+        media_id: i64,
+    ) -> Result<Vec<EpisodeSourceRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                id, episode_id, source, source_id, media_id, media_kind,
+                season_number, episode_number, absolute_number,
+                title_display, title_original, titles_json,
+                synopsis, air_date, runtime_minutes, thumbnail_url,
+                raw_json, fetched_at
+            FROM episode_source_record
+            WHERE media_id = ?1
+            ORDER BY source, absolute_number
+            "#,
+        )?;
+        let rows = stmt.query_map(params![media_id], |row| {
+            let source =
+                parse_source(row.get_ref(2)?.as_str()?).map_err(|e| rusqlite_decode_error(2, e))?;
+            let media_kind = parse_media_kind(row.get_ref(5)?.as_str()?)
+                .map_err(|e| rusqlite_decode_error(5, e))?;
+            let titles_json = row
+                .get::<_, Option<String>>(11)?
+                .map(|value| serde_json::from_str::<Value>(&value).ok())
+                .flatten();
+            let raw_json = row
+                .get::<_, Option<String>>(16)?
+                .map(|value| serde_json::from_str::<Value>(&value).ok())
+                .flatten();
+            Ok(EpisodeSourceRecord {
+                id: row.get(0)?,
+                episode_id: row.get(1)?,
+                source,
+                source_id: row.get(3)?,
+                media_id: row.get(4)?,
+                media_kind,
+                season_number: row.get(6)?,
+                episode_number: row.get(7)?,
+                absolute_number: row.get(8)?,
+                title_display: row.get(9)?,
+                title_original: row.get(10)?,
+                titles_json,
+                synopsis: row.get(12)?,
+                air_date: row.get(13)?,
+                runtime_minutes: row.get(14)?,
+                thumbnail_url: row.get(15)?,
+                raw_json,
+                fetched_at: row.get(17)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
+    }
+
     pub fn episode_by_absolute_number(
         &self,
         media_id: i64,
@@ -1216,11 +1535,9 @@ impl AnimeDb {
             .query_row(
                 r#"
                 SELECT
-                    id, source, source_id, media_id, media_kind,
-                    season_number, episode_number, absolute_number,
-                    title_display, title_original, synopsis,
-                    air_date, runtime_minutes, thumbnail_url,
-                    raw_titles_json, raw_json
+                    id, media_id, season_number, episode_number, absolute_number,
+                    title_display, title_original, titles_json,
+                    synopsis, air_date, runtime_minutes, thumbnail_url
                 FROM episode
                 WHERE media_id = ?1 AND absolute_number = ?2
                 "#,
@@ -1241,11 +1558,9 @@ impl AnimeDb {
             .query_row(
                 r#"
                 SELECT
-                    id, source, source_id, media_id, media_kind,
-                    season_number, episode_number, absolute_number,
-                    title_display, title_original, synopsis,
-                    air_date, runtime_minutes, thumbnail_url,
-                    raw_titles_json, raw_json
+                    id, media_id, season_number, episode_number, absolute_number,
+                    title_display, title_original, titles_json,
+                    synopsis, air_date, runtime_minutes, thumbnail_url
                 FROM episode
                 WHERE media_id = ?1 AND season_number = ?2 AND episode_number = ?3
                 "#,
@@ -1286,8 +1601,11 @@ impl AnimeDb {
         let episodes = provider.fetch_episodes(media.media_kind, source_id)?;
 
         for episode in &episodes {
-            self.upsert_episode(episode, media.id)?;
+            self.upsert_episode_source_record(episode, media.id)?;
         }
+
+        // Merge all source records into canonical episodes
+        self.merge_episodes_for_media(media.id)?;
 
         self.episodes_for_media(media.id)
     }
@@ -2348,39 +2666,111 @@ fn parse_source(value: &str) -> Result<SourceName> {
     value.parse()
 }
 
+/// Provider priority for episode merge (higher = more preferred).
+fn episode_provider_priority(source: SourceName) -> u8 {
+    match source {
+        SourceName::AniList => 5,
+        SourceName::MyAnimeList => 4,
+        SourceName::Jikan => 3,
+        SourceName::Kitsu => 2,
+        SourceName::Tvmaze => 4,
+        SourceName::Imdb => 5,
+    }
+}
+
+/// Merges a group of source records into a single canonical episode.
+/// Uses provider priority to resolve field conflicts.
+fn merge_episode_source_records(records: &[EpisodeSourceRecord]) -> StoredEpisode {
+    // Sort by priority descending
+    let mut sorted = records.to_vec();
+    sorted.sort_by_key(|r| episode_provider_priority(r.source));
+    let highest = &sorted[0];
+
+    fn pick<T: Clone>(values: &[(Option<T>, SourceName)]) -> Option<T> {
+        // Sort by priority descending and take the last (highest priority)
+        let mut with_prio: Vec<_> = values
+            .iter()
+            .filter_map(|(v, s)| v.as_ref().map(|val| (val, *s)))
+            .collect();
+        with_prio.sort_by_key(|(_, s)| episode_provider_priority(*s));
+        with_prio.last().map(|(v, _)| (*v).clone())
+    }
+
+    let title_display = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.title_display.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let title_original = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.title_original.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let synopsis = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.synopsis.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let air_date = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.air_date.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let runtime_minutes = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.runtime_minutes, r.source))
+            .collect::<Vec<_>>(),
+    );
+    let thumbnail_url = pick(
+        &sorted
+            .iter()
+            .map(|r| (r.thumbnail_url.clone(), r.source))
+            .collect::<Vec<_>>(),
+    );
+    let titles_json = highest.titles_json.clone();
+
+    StoredEpisode {
+        id: 0, // Will be assigned on insert
+        media_id: highest.media_id,
+        season_number: highest.season_number,
+        episode_number: highest.episode_number,
+        absolute_number: highest.absolute_number,
+        title_display,
+        title_original,
+        titles_json,
+        synopsis,
+        air_date,
+        runtime_minutes,
+        thumbnail_url,
+    }
+}
+
 fn parse_stored_episode(
     row: &rusqlite::Row<'_>,
 ) -> std::result::Result<StoredEpisode, rusqlite::Error> {
-    let source =
-        parse_source(row.get_ref(1)?.as_str()?).map_err(|err| rusqlite_decode_error(1, err))?;
-    let media_kind =
-        parse_media_kind(row.get_ref(4)?.as_str()?).map_err(|err| rusqlite_decode_error(4, err))?;
-    let raw_titles_json = row
-        .get::<_, Option<String>>(14)?
-        .map(|value| serde_json::from_str::<Value>(&value).ok())
-        .flatten();
-    let raw_json = row
-        .get::<_, Option<String>>(15)?
+    let titles_json = row
+        .get::<_, Option<String>>(7)?
         .map(|value| serde_json::from_str::<Value>(&value).ok())
         .flatten();
 
     Ok(StoredEpisode {
         id: row.get(0)?,
-        source,
-        source_id: row.get(2)?,
-        media_id: row.get(3)?,
-        media_kind,
-        season_number: row.get(5)?,
-        episode_number: row.get(6)?,
-        absolute_number: row.get(7)?,
-        title_display: row.get(8)?,
-        title_original: row.get(9)?,
-        synopsis: row.get(10)?,
-        air_date: row.get(11)?,
-        runtime_minutes: row.get(12)?,
-        thumbnail_url: row.get(13)?,
-        raw_titles_json,
-        raw_json,
+        media_id: row.get(1)?,
+        season_number: row.get(2)?,
+        episode_number: row.get(3)?,
+        absolute_number: row.get(4)?,
+        title_display: row.get(5)?,
+        title_original: row.get(6)?,
+        titles_json,
+        synopsis: row.get(8)?,
+        air_date: row.get(9)?,
+        runtime_minutes: row.get(10)?,
+        thumbnail_url: row.get(11)?,
     })
 }
 
@@ -3374,9 +3764,15 @@ mod tests {
 
         let episodes = db.episodes_for_media(media_id).expect("list episodes");
         assert_eq!(episodes.len(), 1);
-        assert_eq!(episodes[0].source_id, "ep1");
         assert_eq!(episodes[0].episode_number, Some(1));
         assert_eq!(episodes[0].title_display.as_deref(), Some("The Hospital"));
+
+        // Verify source records are stored
+        let source_records = db
+            .episode_source_records_for_media(media_id)
+            .expect("source records");
+        assert_eq!(source_records.len(), 1);
+        assert_eq!(source_records[0].source_id, "ep1");
     }
 
     #[test]

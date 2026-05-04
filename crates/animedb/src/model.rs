@@ -382,10 +382,28 @@ pub struct CanonicalEpisode {
     pub raw_json: Option<Value>,
 }
 
-/// Stored episode data persisted in SQLite.
+/// Canonical episode data persisted in SQLite.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredEpisode {
     pub id: i64,
+    pub media_id: i64,
+    pub season_number: Option<i32>,
+    pub episode_number: Option<i32>,
+    pub absolute_number: Option<i32>,
+    pub title_display: Option<String>,
+    pub title_original: Option<String>,
+    pub titles_json: Option<Value>,
+    pub synopsis: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime_minutes: Option<i32>,
+    pub thumbnail_url: Option<String>,
+}
+
+/// Episode record as received from a specific provider (raw/normalized).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpisodeSourceRecord {
+    pub id: i64,
+    pub episode_id: Option<i64>,
     pub source: SourceName,
     pub source_id: String,
     pub media_id: i64,
@@ -395,12 +413,13 @@ pub struct StoredEpisode {
     pub absolute_number: Option<i32>,
     pub title_display: Option<String>,
     pub title_original: Option<String>,
+    pub titles_json: Option<Value>,
     pub synopsis: Option<String>,
     pub air_date: Option<String>,
     pub runtime_minutes: Option<i32>,
     pub thumbnail_url: Option<String>,
-    pub raw_titles_json: Option<Value>,
     pub raw_json: Option<Value>,
+    pub fetched_at: String,
 }
 
 /// A media record paired with its enriched episode list.

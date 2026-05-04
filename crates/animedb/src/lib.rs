@@ -39,8 +39,9 @@ mod remote;
 
 pub use error::{Error, Result};
 pub use model::{
-    CanonicalEpisode, CanonicalMedia, ExternalId, FieldProvenance, MediaDocument, MediaKind,
-    SearchHit, SearchOptions, SourceName, SourcePayload, StoredEpisode, StoredMedia,
+    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance,
+    MediaDocument, MediaKind, SearchHit, SearchOptions, SourceName, SourcePayload, StoredEpisode,
+    StoredMedia,
 };
 
 // Provider trait and concrete provider structs.
