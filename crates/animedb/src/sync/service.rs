@@ -1,3 +1,19 @@
+//! Orchestrates paginated provider-to-catalog sync runs.
+//!
+//! ## Sync flow
+//!
+//! 1. Load persisted [`PersistedSyncState`] for the provider + scope (if any)
+//! 2. Fetch one page from the provider via [`Provider::fetch_page`]
+//! 3. Upsert each media item into the catalog (merge engine runs automatically)
+//! 4. Persist the updated cursor to `sync_state`
+//! 5. Repeat until the provider returns an empty page or `max_pages` is reached
+//!
+//! ## Provider rate limiting
+//!
+//! Each provider declares a [`Provider::min_interval`]; the service enforces it
+//! by calling `thread::sleep` between page fetches. The sync loop is therefore
+//! cooperative and will not hammer a provider's API.
+
 use crate::db::AnimeDb;
 use crate::error::{Error, Result};
 use crate::model::*;
@@ -5,11 +21,22 @@ use crate::provider::*;
 use std::path::Path;
 use std::thread;
 
+/// Orchestrates sync operations against one open [`AnimeDb`] instance.
+///
+/// Obtain via [`AnimeDb::sync_service`](crate::db::AnimeDb::sync_service).
 pub struct SyncService<'a> {
+    /// The database instance to sync into.
     pub db: &'a mut AnimeDb,
 }
 
 impl<'a> SyncService<'a> {
+    /// Syncs from a single provider using a custom [`SyncRequest`].
+    ///
+    /// Validates that `provider.source()` matches `request.source`, then
+    /// iterates over pages until the provider is exhausted or `max_pages` is reached.
+    ///
+    /// Cursor state is persisted after every page, so interrupted syncs can be
+    /// resumed by calling this again with the same provider + request.
     pub fn sync_from<P: Provider>(
         &mut self,
         provider: &P,
@@ -98,6 +125,8 @@ impl<'a> SyncService<'a> {
         })
     }
 
+    /// Syncs all default providers: AniList, Jikan, Kitsu (anime + manga),
+    /// TVmaze (shows), and IMDb (shows + movies).
     pub fn sync_default_sources(&mut self) -> Result<SyncReport> {
         let anilist = AniListProvider::default();
         let jikan = JikanProvider::default();
@@ -141,11 +170,14 @@ impl<'a> SyncService<'a> {
         })
     }
 
+    /// Convenience — opens a database at `path`, runs [`SyncService::sync_default_sources`],
+    /// and returns the report.
     pub fn sync_database(path: impl AsRef<Path>) -> Result<SyncReport> {
         let mut db = AnimeDb::open(path)?;
         db.sync_default_sources()
     }
 
+    /// Syncs AniList for one media kind.
     pub fn sync_anilist(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_from(
             &AniListProvider::default(),
@@ -153,6 +185,7 @@ impl<'a> SyncService<'a> {
         )
     }
 
+    /// Syncs Jikan for one media kind.
     pub fn sync_jikan(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_from(
             &JikanProvider::default(),
@@ -160,6 +193,7 @@ impl<'a> SyncService<'a> {
         )
     }
 
+    /// Syncs Kitsu for one media kind.
     pub fn sync_kitsu(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_from(
             &KitsuProvider::default(),
@@ -167,6 +201,7 @@ impl<'a> SyncService<'a> {
         )
     }
 
+    /// Syncs TVmaze (shows only).
     pub fn sync_tvmaze(&mut self) -> Result<SyncOutcome> {
         self.sync_from(
             &TvmazeProvider::default(),
@@ -174,6 +209,7 @@ impl<'a> SyncService<'a> {
         )
     }
 
+    /// Syncs IMDb for one media kind.
     pub fn sync_imdb(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_from(
             &ImdbProvider::default(),

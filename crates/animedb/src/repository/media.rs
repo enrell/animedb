@@ -1,3 +1,5 @@
+//! Media record persistence — `media`, `media_alias`, `media_external_id`, `source_record`, `field_provenance`.
+
 use super::common::*;
 use crate::error::{Error, Result};
 use crate::merge::merge_media;
@@ -5,11 +7,27 @@ use crate::model::*;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
 
+/// Repository for media record persistence and lookup.
+///
+/// All methods are thin wrappers over SQLite queries. The `upsert_media_in_tx`
+/// method is the core write path — it calls [`merge_media`] internally to
+/// resolve field-level conflicts before writing.
 pub struct MediaRepository<'a> {
     pub conn: &'a Connection,
 }
 
 impl<'a> MediaRepository<'a> {
+    /// Inserts a new media record or merges it with an existing record sharing the same external ID.
+    ///
+    /// Returns the local `media.id` of the inserted or updated record.
+    ///
+    /// # Merge behavior
+    ///
+    /// If a record with a matching external ID + media kind already exists, the
+    /// merge engine scores each incoming field against stored provenance and
+    /// keeps the higher-scoring value per field. All tables (`media`, `media_alias`,
+    /// `media_external_id`, `source_record`, `field_provenance`, `media_fts`) are
+    /// updated atomically inside a transaction.
     pub fn upsert_media(conn: &mut Connection, media: &CanonicalMedia) -> Result<i64> {
         media.validate()?;
         let tx = conn.transaction()?;
@@ -18,6 +36,8 @@ impl<'a> MediaRepository<'a> {
         Ok(media_id)
     }
 
+    /// Fetches a stored media record by local primary key.
+    /// Returns [`Error::NotFound`] if the ID does not exist.
     pub fn get_media(&self, media_id: i64) -> Result<StoredMedia> {
         let row = self
             .conn

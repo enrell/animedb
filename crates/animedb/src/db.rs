@@ -1,7 +1,3 @@
-use rusqlite::{Connection, OptionalExtension};
-use std::error::Error as StdError;
-use std::path::Path;
-
 use crate::error::{Error, Result};
 use crate::model::{
     CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, FieldProvenance, MediaDocument,
@@ -10,26 +6,57 @@ use crate::model::{
 };
 use crate::provider::Provider;
 use crate::remote::{RemoteApi, RemoteSource};
+use crate::repository;
+use rusqlite::{Connection, OptionalExtension};
+use std::path::Path;
 
-/// Local-first entry point for the SQLite-backed catalog.
+/// Local-first SQLite-backed catalog entry point.
 ///
-/// `AnimeDb` owns schema creation and migrations, provider sync, merge materialization,
-/// local queries, and access to the underlying SQLite connection when lower-level control
-/// is necessary.
+/// `AnimeDb` owns:
+/// - SQLite schema creation and migration (automatic on [`open`](AnimeDb::open))
+/// - Provider sync orchestration via [`sync_service`](AnimeDb::sync_service)
+/// - Merge materialization during upsert
+/// - Typed repository facades for media, episodes, search, and sync state
+/// - Access to the raw SQLite connection for advanced use cases
+///
+/// # Example — fresh catalog with bootstrap sync
+/// ```ignore
+/// let (mut db, report) = AnimeDb::generate_database_with_report("/tmp/animedb.sqlite")?;
+/// println!("synced {} records", report.total_upserted_records);
+/// ```
+///
+/// # Example — open existing and query
+/// ```ignore
+/// let db = AnimeDb::open("/tmp/animedb.sqlite")?;
+/// let monster = db.anime_metadata().by_external_id(SourceName::AniList, "19")?;
+/// ```
+///
+/// # Feature gating
+///
+/// Requires the `local-db` feature (enabled by default). Without it, only the
+/// remote-first API via [`RemoteApi`](crate::remote::RemoteApi) is available.
 pub struct AnimeDb {
     conn: Connection,
 }
 
 impl AnimeDb {
+    /// Upserts a canonical media record. Returns the local `media.id`.
+    ///
+    /// If an existing record matches the same external ID + media kind, the merge
+    /// engine scores incoming fields against stored provenance and keeps the higher.
     pub fn upsert_media(&mut self, media: &CanonicalMedia) -> Result<i64> {
         crate::repository::MediaRepository::upsert_media(&mut self.conn, media)
     }
+    /// Fetches a media record by its local primary key.
     pub fn get_media(&self, media_id: i64) -> Result<StoredMedia> {
         self.media().get_media(media_id)
     }
+    /// Fetches a media record by provider + source ID. Raises [`Error::ConflictingExternalId`]
+    /// if the same ID resolves to multiple media kinds.
     pub fn get_by_external_id(&self, source: SourceName, source_id: &str) -> Result<StoredMedia> {
         self.media().get_by_external_id(source, source_id)
     }
+    /// Kind-specific variant of [`get_by_external_id`](AnimeDb::get_by_external_id).
     pub fn get_by_external_id_and_kind(
         &self,
         source: SourceName,
@@ -39,21 +66,26 @@ impl AnimeDb {
         self.media()
             .get_by_external_id_and_kind(source, kind, source_id)
     }
+    /// Full-text search over title, aliases, and synopsis.
     pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchHit>> {
         self.search_repo().search(query, options)
     }
+    /// Upserts a canonical episode record linked to a media item.
     pub fn upsert_episode(&mut self, episode: &CanonicalEpisode, media_id: i64) -> Result<i64> {
         self.episodes().upsert_episode(episode, media_id)
     }
+    /// Lists all canonical episode records for a media item.
     pub fn episodes_for_media(&self, media_id: i64) -> Result<Vec<StoredEpisode>> {
         self.episodes().episodes_for_media(media_id)
     }
+    /// Lists all raw source records for a media item (for audit or re-merging).
     pub fn episode_source_records_for_media(
         &self,
         media_id: i64,
     ) -> Result<Vec<EpisodeSourceRecord>> {
         self.episodes().episode_source_records_for_media(media_id)
     }
+    /// Looks up a single episode by its absolute number across all seasons.
     pub fn episode_by_absolute_number(
         &self,
         media_id: i64,
@@ -62,6 +94,7 @@ impl AnimeDb {
         self.episodes()
             .episode_by_absolute_number(media_id, abs_num)
     }
+    /// Looks up a single episode by season + episode number.
     pub fn episode_by_season_episode(
         &self,
         media_id: i64,
@@ -70,9 +103,11 @@ impl AnimeDb {
     ) -> Result<Option<StoredEpisode>> {
         self.episodes().episode_by_season_episode(media_id, s, e)
     }
+    /// Returns the media record and its full episode list.
     pub fn media_document_by_id(&self, media_id: i64) -> Result<MediaDocument> {
         self.search_repo().media_document_by_id(media_id)
     }
+    /// Returns the media record and its full episode list by external ID.
     pub fn media_document_by_external_id(
         &self,
         source: SourceName,
@@ -82,12 +117,12 @@ impl AnimeDb {
             .media_document_by_external_id(source, source_id)
     }
 
-    /// Builds a remote-only facade for a selected provider.
-
+    /// Returns a [`crate::sync::SyncService`] reference for orchestrating provider syncs.
     pub fn sync_service(&mut self) -> crate::sync::SyncService<'_> {
         crate::sync::SyncService { db: self }
     }
 
+    /// Syncs from a single provider using a custom [`SyncRequest`].
     pub fn sync_from<P: Provider>(
         &mut self,
         provider: &P,
@@ -96,50 +131,62 @@ impl AnimeDb {
         self.sync_service().sync_from(provider, request)
     }
 
+    /// Syncs all default providers (AniList, Jikan, Kitsu, TVmaze, IMDb).
     pub fn sync_default_sources(&mut self) -> Result<SyncReport> {
         self.sync_service().sync_default_sources()
     }
 
+    /// Opens a database at `path` and runs the full default sync. Returns only the [`AnimeDb`].
     pub fn sync_database(path: impl AsRef<Path>) -> Result<SyncReport> {
         crate::sync::SyncService::sync_database(path)
     }
 
+    /// Syncs AniList for one media kind.
     pub fn sync_anilist(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_service().sync_anilist(media_kind)
     }
 
+    /// Syncs Jikan for one media kind.
     pub fn sync_jikan(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_service().sync_jikan(media_kind)
     }
 
+    /// Syncs Kitsu for one media kind.
     pub fn sync_kitsu(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_service().sync_kitsu(media_kind)
     }
 
+    /// Syncs TVmaze (shows only).
     pub fn sync_tvmaze(&mut self) -> Result<SyncOutcome> {
         self.sync_service().sync_tvmaze()
     }
 
+    /// Syncs IMDb for one media kind.
     pub fn sync_imdb(&mut self, media_kind: MediaKind) -> Result<SyncOutcome> {
         self.sync_service().sync_imdb(media_kind)
     }
 
+    /// Returns a [`crate::repository::MediaRepository`] for direct media access.
     pub fn media(&self) -> crate::repository::MediaRepository<'_> {
         crate::repository::MediaRepository { conn: &self.conn }
     }
 
+    /// Returns a [`crate::repository::EpisodeRepository`] for direct episode access.
     pub fn episodes(&self) -> crate::repository::EpisodeRepository<'_> {
         crate::repository::EpisodeRepository { conn: &self.conn }
     }
 
+    /// Returns a [`crate::repository::SearchRepository`] for direct search access.
     pub fn search_repo(&self) -> crate::repository::SearchRepository<'_> {
         crate::repository::SearchRepository { conn: &self.conn }
     }
 
+    /// Returns a [`crate::repository::SyncStateRepository`] for sync checkpoint management.
     pub fn sync_state(&self) -> crate::repository::SyncStateRepository<'_> {
         crate::repository::SyncStateRepository { conn: &self.conn }
     }
 
+    /// Builds a remote-only facade for a selected provider.
     pub fn remote(source: RemoteSource) -> RemoteApi {
         RemoteApi::from(source)
     }
@@ -185,6 +232,8 @@ impl AnimeDb {
     /// Syncs IMDb records for one media kind into the local database.
 
     /// Opens or creates a SQLite catalog, applies runtime pragmas, and runs migrations.
+    ///
+    /// Migration is automatic. The schema version is stored in `PRAGMA user_version`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open(path)?;
         crate::schema::configure(&conn)?;
@@ -193,6 +242,7 @@ impl AnimeDb {
     }
 
     /// Opens an in-memory SQLite catalog with the same pragmas and migrations as a file-backed DB.
+    /// Useful for tests.
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         crate::schema::configure(&conn)?;
@@ -205,6 +255,7 @@ impl AnimeDb {
         &self.conn
     }
 
+    /// Returns a filtered query facade for anime records.
     pub fn anime_metadata(&self) -> MetadataCollection<'_> {
         MetadataCollection::new(
             self,
@@ -212,6 +263,7 @@ impl AnimeDb {
         )
     }
 
+    /// Returns a filtered query facade for manga records.
     pub fn manga_metadata(&self) -> MetadataCollection<'_> {
         MetadataCollection::new(
             self,
@@ -219,6 +271,7 @@ impl AnimeDb {
         )
     }
 
+    /// Returns a filtered query facade for anime movies.
     pub fn movie_metadata(&self) -> MetadataCollection<'_> {
         MetadataCollection::new(
             self,
@@ -243,6 +296,16 @@ impl AnimeDb {
 
     /// Returns all source episode records for a media item (for audit/debug).
 
+    /// Fetches episodes from a registered provider and stores them for a media item.
+    ///
+    /// # Example
+    /// ```ignore
+    /// db.fetch_and_store_episodes(SourceName::Kitsu, "1")?;
+    /// let doc = db.media_document_by_external_id(SourceName::Kitsu, "1")?;
+    /// for ep in doc.episodes {
+    ///     println!("{} - {}", ep.absolute_number, ep.title_display);
+    /// }
+    /// ```
     pub fn fetch_and_store_episodes(
         &mut self,
         source: SourceName,
@@ -252,6 +315,8 @@ impl AnimeDb {
         self.fetch_and_store_episodes_from(&*provider, source, source_id)
     }
 
+    /// Same as [`fetch_and_store_episodes`](AnimeDb::fetch_and_store_episodes) but accepts a
+    /// generic [`Provider`] for testing or custom provider use.
     pub fn fetch_and_store_episodes_from(
         &mut self,
         provider: &dyn Provider,
@@ -282,8 +347,10 @@ impl AnimeDb {
 
 /// Typed query facade over one local media slice.
 ///
-/// Use this through [`AnimeDb::anime_metadata`], [`AnimeDb::manga_metadata`], or
-/// [`AnimeDb::movie_metadata`] to avoid repeating search filters.
+/// Use via [`AnimeDb::anime_metadata`](AnimeDb::anime_metadata),
+/// [`AnimeDb::manga_metadata`](AnimeDb::manga_metadata), or
+/// [`AnimeDb::movie_metadata`](AnimeDb::movie_metadata) to scope searches
+/// and lookups to a specific media kind without repeating filter options.
 pub struct MetadataCollection<'a> {
     db: &'a AnimeDb,
     options: SearchOptions,
@@ -294,10 +361,13 @@ impl<'a> MetadataCollection<'a> {
         Self { db, options }
     }
 
+    /// Full-text search within this media kind slice.
     pub fn search(&self, query: &str) -> Result<Vec<SearchHit>> {
         self.db.search(query, self.options.clone())
     }
 
+    /// Fetch a stored media record by local ID. Returns [`Error::NotFound`] if the ID
+    /// exists but belongs to a different media kind.
     pub fn get(&self, media_id: i64) -> Result<StoredMedia> {
         let media = self.db.get_media(media_id)?;
         if self.matches_media(&media) {
@@ -307,6 +377,7 @@ impl<'a> MetadataCollection<'a> {
         }
     }
 
+    /// Fetch a stored media record by provider + source ID, scoped to this kind.
     pub fn by_external_id(&self, source: SourceName, source_id: &str) -> Result<StoredMedia> {
         let media = if let Some(kind) = self.options.media_kind {
             self.db

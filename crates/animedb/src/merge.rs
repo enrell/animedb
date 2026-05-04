@@ -1,9 +1,27 @@
+//! Pure domain logic for merging canonical media and episode records.
+//!
+//! The merge engine is invoked on every upsert when an existing record is found
+//! for the same external ID. It scores each incoming field against the stored
+//! provenance and writes the higher-scoring value along with an audit trail
+//! to [`field_provenance`](crate::model::CanonicalMedia::field_provenance).
+//!
+//! # Scoring formula
+//!
+//! Each field type uses a weighted sum of provider weight, completeness, and
+//! quality signals. The exact weights differ per type (text, integer, boolean,
+//! cover image) but all share the same provider priority order.
+//!
+//! # Provider priority (highest to lowest)
+//!
+//! AniList > IMDb > TVmaze > MyAnimeList > Kitsu > Jikan
+
 use crate::model::{
     CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance, SourceName, SourcePayload,
     StoredEpisode, StoredMedia,
 };
 use std::collections::HashMap;
 
+/// Result of scoring a single field candidate from a provider.
 #[derive(Debug, Clone)]
 pub struct MergeDecision<T> {
     pub value: T,
@@ -11,6 +29,10 @@ pub struct MergeDecision<T> {
     pub reason: String,
 }
 
+/// Returns the 0.0–1.0 provider weight for merge scoring.
+///
+/// These weights reflect data completeness, normalization quality, and
+/// the trustworthiness of IDs as stable identity anchors.
 pub fn provider_weight(source: SourceName) -> f64 {
     match source {
         SourceName::AniList => 0.90,
@@ -22,6 +44,11 @@ pub fn provider_weight(source: SourceName) -> f64 {
     }
 }
 
+/// Scores a text field candidate from a provider.
+///
+/// Combines provider weight, string completeness (length / 240), text quality
+/// (HTML penalty, newline bonus, synopsis bias), and a consistency bonus
+/// based on how many other fields on the candidate are already filled.
 pub fn score_text_field(
     source: SourceName,
     field_name: &str,
@@ -179,6 +206,13 @@ fn consistency_bonus(candidate: &CanonicalMedia) -> f64 {
     filled.clamp(0.0, 1.0)
 }
 
+/// Merges an incoming [`CanonicalMedia`] with an optional existing [`StoredMedia`] record.
+///
+/// When `existing` is `None`, returns the incoming record unchanged (no merge needed).
+/// When `existing` is `Some`, each field is independently scored and the higher-scoring
+/// value is selected. Provenance is recorded for every field that changes.
+///
+/// The `media_kind` field is preserved from the existing record and never overwritten.
 pub fn merge_media(existing: Option<&StoredMedia>, incoming: &CanonicalMedia) -> CanonicalMedia {
     let origin = incoming_origin(incoming);
     let existing_scores = existing_score_map(existing);
@@ -379,6 +413,13 @@ pub fn merge_media(existing: Option<&StoredMedia>, incoming: &CanonicalMedia) ->
     }
 }
 
+/// Merges multiple source episode records for the same media+episode into one canonical record.
+///
+/// Groups records by `(media_id, absolute_number)` or `(media_id, season_number, episode_number)`,
+/// then selects field values from the highest-priority provider per field using
+/// the episode provider priority order.
+///
+/// Priority order (highest to lowest): AniList > IMDb > TVmaze > MyAnimeList > Jikan > Kitsu
 pub fn merge_episode_source_records(records: &[EpisodeSourceRecord]) -> StoredEpisode {
     // Sort by priority descending
     let mut sorted = records.to_vec();

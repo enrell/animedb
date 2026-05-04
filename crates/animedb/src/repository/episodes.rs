@@ -1,3 +1,13 @@
+//! Episode record persistence — `episode` (canonical) and `episode_source_record` (per-provider raw).
+//!
+//! Episode storage follows a two-tier design:
+//!
+//! 1. [`EpisodeSourceRecord`] — raw per-provider episode data stored verbatim for audit
+//! 2. [`StoredEpisode`] — canonical merged episode (one per media+numbering slot)
+//!
+//! The merge runs automatically after every source record upsert via
+//! [`merge_episodes_for_media`](EpisodeRepository::merge_episodes_for_media).
+
 use super::common::*;
 use crate::error::{Error, Result};
 use crate::merge::merge_episode_source_records;
@@ -6,11 +16,17 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Repository for episode record upsert and lookup.
 pub struct EpisodeRepository<'a> {
     pub conn: &'a Connection,
 }
 
 impl<'a> EpisodeRepository<'a> {
+    /// Inserts or updates a raw source episode record.
+    ///
+    /// After inserting, automatically runs [`EpisodeRepository::merge_episodes_for_media`] to
+    /// update the canonical `episode` table from all accumulated source records.
+    /// Returns the `episode_source_record.id` of the inserted/updated row.
     pub fn upsert_episode_source_record(
         &mut self,
         episode: &CanonicalEpisode,
@@ -77,10 +93,16 @@ impl<'a> EpisodeRepository<'a> {
         Ok(source_record_id)
     }
 
+    /// Alias for [`upsert_episode_source_record`](EpisodeRepository::upsert_episode_source_record).
     pub fn upsert_episode(&mut self, episode: &CanonicalEpisode, media_id: i64) -> Result<i64> {
         self.upsert_episode_source_record(episode, media_id)
     }
 
+    /// Loads all source records for a media item, merges them, and upserts canonical episodes.
+    ///
+    /// Grouping key is `(media_id, absolute_number)` or fallback
+    /// `(media_id, season_number, episode_number)`. Provider priority for field
+    /// selection is AniList > IMDb > TVmaze > MyAnimeList > Jikan > Kitsu.
     pub fn merge_episodes_for_media(&mut self, media_id: i64) -> Result<()> {
         // Load all source records for this media
         let records = {
@@ -260,6 +282,7 @@ impl<'a> EpisodeRepository<'a> {
         }
     }
 
+    /// Returns all canonical episodes for a media item, ordered by season + episode number.
     pub fn episodes_for_media(&self, media_id: i64) -> Result<Vec<StoredEpisode>> {
         let mut stmt = self.conn.prepare(
             r#"
