@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "animedb"
-version = "0.3.2"
+version = "0.3.4"
 dependencies = [
  "flate2",
  "reqwest",
@@ -45,11 +45,12 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "animedb-api"
-version = "0.3.2"
+version = "0.3.4"
 dependencies = [
  "animedb",
  "async-graphql",

@@ -4,9 +4,10 @@
 /// knowledge.  It contains only generic HTTP building blocks that every
 /// provider can reuse.
 use reqwest::blocking::Client;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 // ---------------------------------------------------------------------------
 // HttpClient — thin wrapper around reqwest with a base URL
@@ -16,24 +17,29 @@ use crate::error::Result;
 ///
 /// Providers hold one of these and call `.get(path)` / `.post(path)` to
 /// build requests relative to their configured endpoint.
+///
+/// Construction is lazy: the inner `reqwest::blocking::Client` is built on
+/// first HTTP call.  This avoids panicking when a provider is constructed
+/// inside a `#[tokio::test]` runtime (blocking client must not outlive the
+/// runtime it was created in).
 #[derive(Clone, Debug)]
 pub struct HttpClient {
-    pub inner: Client,
+    inner: Arc<Mutex<Option<Client>>>,
     pub base_url: String,
+    timeout: Duration,
 }
 
 impl HttpClient {
     /// Constructs a client with the given timeout and base URL.
+    ///
+    /// The underlying `reqwest::blocking::Client` is built lazily on first
+    /// HTTP call to avoid panicking when a provider is constructed inside a
+    /// `#[tokio::test]` runtime.
     pub fn new(timeout: Duration, base_url: impl Into<String>) -> Self {
-        let inner = Client::builder()
-            .timeout(timeout)
-            .user_agent("animedb/0.1")
-            .build()
-            .expect("reqwest blocking client must build");
-
         Self {
-            inner,
+            inner: Arc::new(Mutex::new(None)),
             base_url: base_url.into(),
+            timeout,
         }
     }
 
@@ -42,14 +48,32 @@ impl HttpClient {
         Self::new(Duration::from_secs(30), "")
     }
 
+    /// Returns the shared `Client`, initializing it lazily on first call.
+    pub fn client(&self) -> Result<Client> {
+        let mut guard = self.inner.lock().map_err(|_| Error::Sync("poisoned".into()))?;
+        if guard.is_none() {
+            let client = Client::builder()
+                .timeout(self.timeout)
+                .user_agent("animedb/0.1")
+                .build()
+                .map_err(|e| Error::Http(e))?;
+            *guard = Some(client);
+        }
+        Ok(guard.as_ref().unwrap().clone())
+    }
+
     /// Returns a builder for a GET request to `{base_url}{path}`.
     pub fn get(&self, path: &str) -> reqwest::blocking::RequestBuilder {
-        self.inner.get(format!("{}{}", self.base_url, path))
+        self.client()
+            .expect("HttpClient must have a valid client")
+            .get(format!("{}{}", self.base_url, path))
     }
 
     /// Returns a builder for a POST request to `{base_url}{path}`.
     pub fn post(&self, path: &str) -> reqwest::blocking::RequestBuilder {
-        self.inner.post(format!("{}{}", self.base_url, path))
+        self.client()
+            .expect("HttpClient must have a valid client")
+            .post(format!("{}{}", self.base_url, path))
     }
 
     /// Override the base URL, returning a new `HttpClient`.
@@ -118,4 +142,38 @@ pub fn clamp_page_size(page_size: usize, max: usize) -> usize {
 #[inline]
 pub fn page_to_offset(cursor_page: usize, page_size: usize) -> usize {
     cursor_page.saturating_sub(1) * page_size
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod regression_tests {
+    use super::HttpClient;
+
+    /// Regression test: constructing `HttpClient` inside a `#[tokio::test]`
+    /// runtime must not panic.
+    ///
+    /// Prior to the lazy initialization fix, `HttpClient::new()` eagerly
+    /// constructed a `reqwest::blocking::Client`.  Dropping that client inside
+    /// a `tokio::runtime::CurrentThread` (used by `#[tokio::test]`) caused a
+    /// panic: "cannot drop runtime in a context where blocking is not allowed".
+    #[tokio::test]
+    async fn http_client_construction_inside_tokio_test_does_not_panic() {
+        // This must not panic — the client is created lazily on first HTTP call,
+        // so construction inside a tokio runtime is safe.
+        let client = HttpClient::new(std::time::Duration::from_secs(30), "https://example.com");
+        assert_eq!(client.base_url, "https://example.com");
+        // No panic — even though we never make an HTTP call in this test,
+        // the important thing is that construction itself is safe.
+    }
+
+    /// Same regression test but using `#[test]` (standard threadpool) to
+    /// confirm both environments work.
+    #[test]
+    fn http_client_construction_in_std_test_does_not_panic() {
+        let client = HttpClient::new(std::time::Duration::from_secs(30), "https://example.com");
+        assert_eq!(client.base_url, "https://example.com");
+    }
 }

@@ -44,6 +44,10 @@ pub enum Error {
         /// Source-specific ID that is ambiguous.
         source_id: String,
     },
+
+    /// A mutex was poisoned (internal synchronization error).
+    #[error("internal sync error")]
+    Sync(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
