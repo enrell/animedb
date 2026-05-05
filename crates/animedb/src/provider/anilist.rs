@@ -90,6 +90,14 @@ impl Provider for AniListProvider {
             .post_with_retry(&payload)?
             .json::<GraphQlResponse<PageData>>()?;
 
+        if is_anilist_page_exhausted(&resp.errors) {
+            eprintln!(
+                "AniList: page {} exceeds 100-page hard limit — ending sync",
+                cursor.page,
+            );
+            return Ok(FetchPage { items: Vec::new(), next_cursor: None });
+        }
+
         check_errors(&resp.errors)?;
 
         let page = resp
@@ -308,6 +316,10 @@ fn check_errors(errors: &[ApiError]) -> Result<()> {
         .collect::<Vec<_>>()
         .join(", ");
     Err(Error::Validation(format!("AniList API errors: {msg}")))
+}
+
+fn is_anilist_page_exhausted(errors: &[ApiError]) -> bool {
+    errors.iter().any(|e| e.message.contains("Page must be between 1 and 100"))
 }
 
 fn into_canonical(item: Media, kind: MediaKind) -> Result<CanonicalMedia> {

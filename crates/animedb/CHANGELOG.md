@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2026-05-05
+
+### Fixed
+
+- **`provider/anilist.rs`**: `fetch_page` now gracefully handles AniList's 100-page hard limit. When a sync cursor exceeds page 100, the provider returns an empty page with no next cursor instead of propagating the GraphQL "Page must be between 1 and 100" error as a fatal failure.
+- **`sync/service.rs`**: (same fix, same file — `sync_anilist` calls `fetch_page` which now handles the page-limit error)
+
 ## [0.3.4] - 2026-05-04
 
 ### Fixed
