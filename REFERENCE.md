@@ -38,6 +38,9 @@ let episodes = db.episodes().episodes_for_media(media_id)?;
 
 // Access sync and orchestration
 db.sync_anilist(MediaKind::Anime)?;
+
+// Use the specialized SyncService for advanced operations
+let stats = db.sync_service().sync_all_episodes()?;
 ```
 
 ### Remote-first API

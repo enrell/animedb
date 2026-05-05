@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-05
+
+### Added
+
+- **`sync/service.rs`**: `sync_all_episodes` method for bulk episode metadata seeding across all providers.
+- **`provider/imdb.rs`**: `fetch_all_episodes` method that streams and parses the IMDb `title.episode.tsv.gz` and `title.basics.tsv.gz` datasets efficiently.
+- **`provider/tvmaze.rs`**: `fetch_episodes` implementation using the TVMaze REST API.
+- **`provider/jikan.rs`**: `fetch_episodes` implementation using the Jikan (MyAnimeList) REST API.
+- **`repository/episodes.rs`**: `upsert_episode_source_record_no_merge` for optimized batch insertions.
+- **`db.rs`**: `get_episodes_by_external_id` for direct episode lookup by provider ID.
+
+### Changed
+
+- **`db.rs`**: `fetch_and_store_episodes_from` optimized to use batch upserts and a single merge per media item.
+- **`repository/episodes.rs`**: `upsert_episode_source_record` refactored to use the new batch logic.
+
 ## [0.3.6] - 2026-05-05
 
 ### Fixed

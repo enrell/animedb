@@ -21,13 +21,13 @@ and API reference.
 
 ## Supported providers
 
-| Provider | Media kinds | Data source | Licensed under |
-|----------|-------------|-------------|---------------|
-| AniList | Anime, Manga | GraphQL API | [AniList Terms](https://anilist.co/terms) |
-| Jikan (MyAnimeList) | Anime, Manga | REST API | [Jikan MIT](https://gitlab.com/moritz-k/jikan/-/blob/master/LICENSE) |
-| Kitsu | Anime, Manga | REST API | [Kitsu API Policy](https://kitsu.io/terms) |
-| TVmaze | Shows | REST API (`api.tvmaze.com`) | CC BY-SA 4.0 |
-| IMDb | Movies, Shows | Official TSV datasets (`datasets.imdb.com`) | [IMDb Conditions](https://www.imdb.com/conditions) |
+| Provider | Media kinds | Data source | Episodes | Licensed under |
+|----------|-------------|-------------|----------|---------------|
+| AniList | Anime, Manga | GraphQL API | N | [AniList Terms](https://anilist.co/terms) |
+| Jikan (MyAnimeList) | Anime, Manga | REST API | Y | [Jikan MIT](https://gitlab.com/moritz-k/jikan/-/blob/master/LICENSE) |
+| Kitsu | Anime, Manga | REST API | Y | [Kitsu API Policy](https://kitsu.io/terms) |
+| TVmaze | Shows | REST API | Y | CC BY-SA 4.0 |
+| IMDb | Movies, Shows | Official TSV datasets | Y | [IMDb Conditions](https://www.imdb.com/conditions) |
 
 ## Workspace
 
@@ -38,10 +38,10 @@ and API reference.
 
 ```toml
 # Full featured (local SQLite + all providers) — default
-animedb = "0.3"
+animedb = "0.4"
 
 # Remote-only, no SQLite dependency (safe for sqlx-based projects)
-animedb = { version = "0.3", default-features = false, features = ["remote"] }
+animedb = { version = "0.4", default-features = false, features = ["remote"] }
 ```
 
 - `local-db` (default): local SQLite storage, sync state persistence, and the [`AnimeDb`] type.
@@ -135,6 +135,8 @@ The `episode` table stores enriched episode data fetched from providers. Key fie
 - `title_display`, `title_original` — localized titles
 - `synopsis`, `air_date`, `runtime_minutes`, `thumbnail_url` — metadata
 
+#### Single Media Sync
+
 Query episodes for a media record:
 
 ```rust
@@ -143,15 +145,25 @@ use animedb::{AnimeDb, SourceName};
 let mut db = AnimeDb::open("/tmp/animedb.sqlite")?;
 
 // Fetch and store episodes from Kitsu for an anime already in the catalog
-db.fetch_and_store_episodes(&KitsuProvider::new(), SourceName::Kitsu, "1")?;
+db.fetch_and_store_episodes_from(SourceName::Kitsu, "1")?;
 
 // Retrieve the media document with its episode list
 let doc = db.media_document_by_external_id(SourceName::Kitsu, "1")?;
 println!("{} has {} episodes", doc.media.title_display, doc.episodes.len());
+```
 
-for episode in doc.episodes {
-    println!("  {:3} - {}", episode.absolute_number.unwrap_or(0), episode.title_display.as_deref().unwrap_or("(no title)"));
-}
+#### Bulk Seeding
+
+To seed the entire database with episode metadata (including high-performance IMDb bulk dump ingestion):
+
+```rust
+use animedb::AnimeDb;
+
+let mut db = AnimeDb::open("/tmp/animedb.sqlite")?;
+
+// Ingest IMDb episode dumps and query APIs for all other providers
+let total = db.sync_service().sync_all_episodes()?;
+println!("Synced {total} episode records across all providers");
 ```
 
 Note: `media.episodes` is the total episode count from provider metadata. `MediaDocument.episodes` is the enriched list of persisted episode records fetched from a specific provider.

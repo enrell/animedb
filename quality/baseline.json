@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
-  "createdAt": "1777947184",
-  "rustqutyVersion": "0.3.0",
+  "createdAt": "1777999882",
+  "rustqutyVersion": "0.3.1",
   "thresholds": {
     "fmt": {
       "mustPass": true
@@ -30,20 +30,20 @@
       "minScore": 0.0
     },
     "duplicates": {
-      "maxDuplicateLines": 0
+      "maxDuplicateLines": 5613
     },
     "loc": {
       "maxLineLength": 120
     },
     "size": {
-      "maxLinesPerFile": 0,
-      "maxCodeLinesPerFile": 0,
-      "maxLinesPerFunction": 0,
-      "maxParametersPerFunction": 0
+      "maxLinesPerFile": 1664,
+      "maxCodeLinesPerFile": 1377,
+      "maxLinesPerFunction": 484,
+      "maxParametersPerFunction": 7
     },
     "complexity": {
-      "maxCyclomaticPerFunction": 0,
-      "maxNestingDepth": 0
+      "maxCyclomaticPerFunction": 61,
+      "maxNestingDepth": 5
     }
   }
 }
