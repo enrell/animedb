@@ -27,6 +27,7 @@ pub struct HttpClient {
     inner: Arc<Mutex<Option<Client>>>,
     pub base_url: String,
     timeout: Duration,
+    pub proxy: Option<String>,
 }
 
 impl HttpClient {
@@ -40,6 +41,7 @@ impl HttpClient {
             inner: Arc::new(Mutex::new(None)),
             base_url: base_url.into(),
             timeout,
+            proxy: None,
         }
     }
 
@@ -55,11 +57,15 @@ impl HttpClient {
             .lock()
             .map_err(|_| Error::Sync("poisoned".into()))?;
         if guard.is_none() {
-            let client = Client::builder()
+            let mut builder = Client::builder()
                 .timeout(self.timeout)
-                .user_agent("animedb/0.1")
-                .build()
-                .map_err(|e| Error::Http(e))?;
+                .user_agent("animedb/0.1");
+
+            if let Some(proxy_url) = &self.proxy {
+                builder = builder.proxy(reqwest::Proxy::all(proxy_url).map_err(Error::Http)?);
+            }
+
+            let client = builder.build().map_err(Error::Http)?;
             *guard = Some(client);
         }
         Ok(guard.as_ref().unwrap().clone())
@@ -82,6 +88,12 @@ impl HttpClient {
     /// Override the base URL, returning a new `HttpClient`.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// Sets the HTTP proxy, returning a new `HttpClient`.
+    pub fn with_proxy(mut self, proxy_url: impl Into<String>) -> Self {
+        self.proxy = Some(proxy_url.into());
         self
     }
 }

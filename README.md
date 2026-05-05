@@ -38,10 +38,10 @@ and API reference.
 
 ```toml
 # Full featured (local SQLite + all providers) — default
-animedb = "0.4"
+animedb = "0.5"
 
 # Remote-only, no SQLite dependency (safe for sqlx-based projects)
-animedb = { version = "0.4", default-features = false, features = ["remote"] }
+animedb = { version = "0.5", default-features = false, features = ["remote"] }
 ```
 
 - `local-db` (default): local SQLite storage, sync state persistence, and the [`AnimeDb`] type.

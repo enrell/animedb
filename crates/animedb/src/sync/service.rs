@@ -88,10 +88,22 @@ impl<'a> SyncService<'a> {
             }
 
             for item in &page.items {
-                self.db.upsert_media(item)?;
+                let media_id = self.db.upsert_media(item)?;
                 upserted_records += 1;
-            }
 
+                // Fetch and upsert episodes if the provider supports them
+                if request.media_kind.unwrap_or(MediaKind::Anime) == MediaKind::Show
+                    || request.media_kind.unwrap_or(MediaKind::Anime) == MediaKind::Anime
+                {
+                    if let Ok(episodes) =
+                        provider.fetch_episodes(item.media_kind, &item.external_ids[0].source_id)
+                    {
+                        for ep in episodes {
+                            let _ = self.db.upsert_episode(&ep, media_id);
+                        }
+                    }
+                }
+            }
             fetched_pages += 1;
             last_cursor = Some(cursor.clone());
 

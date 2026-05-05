@@ -47,6 +47,11 @@ impl AniListProvider {
         }
     }
 
+    pub fn with_proxy(mut self, proxy_url: impl Into<String>) -> Self {
+        self.client = self.client.with_proxy(proxy_url);
+        self
+    }
+
     fn post_with_retry(&self, payload: &serde_json::Value) -> Result<reqwest::blocking::Response> {
         let client = self.client.client()?;
         let url = self.client.base_url.clone();

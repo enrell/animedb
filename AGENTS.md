@@ -92,6 +92,7 @@ Schema migrations live in `schema.rs`. The DB version is tracked via SQLite `use
 
 ## Version & Changelog
 
+- **Quality Gates:** Before creating a PR, pushing to a remote, or publishing a release, you **must** run `rustquty` to verify code quality. Any issues reported by `rustquty` must be fixed before proceeding.
 - Version is set in `[workspace.package]` in `Cargo.toml` (`version = "0.3.5"`).
 - Each crate has its own `CHANGELOG.md` (Keep a Changelog format).
 - On version bump: bump `workspace.package.version`, update both `CHANGELOG.md` files, then `cargo publish` each crate.

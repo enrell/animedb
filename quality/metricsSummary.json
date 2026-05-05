@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "generatedAt": "1777999968",
+  "generatedAt": "1778007147",
   "rustqutyVersion": "0.3.1",
   "project": {
     "name": "animedb",
@@ -50,27 +50,27 @@
     },
     "duplicates": {
       "status": "fail",
-      "totalLines": 10184,
-      "duplicateLines": 5613,
-      "filesWithDuplicates": 26,
+      "totalLines": 10336,
+      "duplicateLines": 5693,
+      "filesWithDuplicates": 27,
       "duplicateFiles": []
     },
     "loc": {
       "status": "pass",
-      "totalLines": 10184,
-      "codeLines": 8259,
-      "commentLines": 906,
-      "blankLines": 1019,
+      "totalLines": 10336,
+      "codeLines": 8383,
+      "commentLines": 912,
+      "blankLines": 1041,
       "longLines": 0,
       "maxLineLengthFound": 118,
       "maxLineLengthAllowed": 120,
-      "files": 29,
+      "files": 30,
       "filesWithLongLines": 0,
       "longLineFiles": []
     },
     "size": {
       "status": "pass",
-      "files": 29,
+      "files": 30,
       "maxLinesPerFile": 1664,
       "maxCodeLinesPerFile": 1377,
       "maxLinesPerFunction": 484,
@@ -79,9 +79,9 @@
     },
     "complexity": {
       "status": "pass",
-      "functions": 308,
+      "functions": 315,
       "maxCyclomaticComplexity": 61,
-      "maxNestingDepth": 5,
+      "maxNestingDepth": 6,
       "complexFunctions": 0,
       "violations": []
     }

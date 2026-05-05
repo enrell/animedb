@@ -44,6 +44,11 @@ impl TvmazeProvider {
                 .with_base_url(endpoint),
         }
     }
+
+    pub fn with_proxy(mut self, proxy_url: impl Into<String>) -> Self {
+        self.client = self.client.with_proxy(proxy_url);
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
