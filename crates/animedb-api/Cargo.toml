@@ -14,7 +14,7 @@ categories = ["web-programming", "api-bindings"]
 exclude = ["target/", ".git/", ".github/"]
 
 [dependencies]
-animedb = { version = "0.3.3", path = "../animedb", features = ["local-db"] }
+animedb = { version = "0.4.0", path = "../animedb", features = ["local-db"] }
 async-graphql.workspace = true
 async-graphql-axum.workspace = true
 axum.workspace = true
