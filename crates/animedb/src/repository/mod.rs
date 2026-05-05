@@ -8,7 +8,7 @@
 //!
 //! | Repository | Table(s) | Responsibility |
 //! |------------|----------|----------------|
-//! | `MediaRepository` | `media`, `media_alias`, `media_external_id` | Media record upsert and lookup by ID or external ID |
+//! | `MediaRepository` | `media`, `media_alias`, `media_external_id` | Media record upsert and lookup |
 //! | `EpisodeRepository` | `episode`, `episode_source_record` | Canonical and source episode upsert and lookup |
 //! | `SearchRepository` | `media_fts` + all media tables | FTS5 search, `MediaDocument` assembly |
 //! | `SyncStateRepository` | `sync_state` | Cursor persistence across sync runs |

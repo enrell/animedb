@@ -216,6 +216,107 @@ impl<'a> SyncService<'a> {
             SyncRequest::new(SourceName::Imdb).with_media_kind(media_kind),
         )
     }
+
+    /// Syncs episodes for all media items currently in the catalog.
+    ///
+    /// For IMDb, downloads the full `.tsv.gz` episode dumps and maps them efficiently.
+    /// For TVMaze, Jikan, and Kitsu, queries the REST API per-media item.
+    pub fn sync_all_episodes(&mut self) -> Result<usize> {
+        let mut total_upserted = 0;
+
+        let mut imdb_parents = std::collections::HashMap::new();
+        let mut api_targets = Vec::new();
+
+        {
+            let mut stmt = self
+                .db
+                .connection()
+                .prepare("SELECT media_id, media_kind, source, source_id FROM media_external_id")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+
+            for row in rows {
+                let (media_id, kind_str, source_str, source_id) = row?;
+                if let (Ok(source), Ok(kind)) = (
+                    source_str.parse::<SourceName>(),
+                    kind_str.parse::<MediaKind>(),
+                ) {
+                    if source == SourceName::Imdb {
+                        imdb_parents.insert(source_id, media_id);
+                    } else if matches!(
+                        source,
+                        SourceName::Tvmaze | SourceName::Jikan | SourceName::Kitsu
+                    ) {
+                        api_targets.push((source, source_id, media_id, kind));
+                    }
+                }
+            }
+        }
+
+        let registry = crate::provider::registry::default_registry();
+        for (source, source_id, media_id, kind) in api_targets {
+            if let Ok(provider) = registry.get(source) {
+                if let Ok(episodes) = provider.fetch_episodes(kind, &source_id) {
+                    for ep in episodes {
+                        if self
+                            .db
+                            .episodes()
+                            .upsert_episode_source_record_no_merge(&ep, media_id)
+                            .is_ok()
+                        {
+                            total_upserted += 1;
+                        }
+                    }
+                    let _ = self.db.episodes().merge_episodes_for_media(media_id);
+                }
+
+                let sleep_for = provider.min_interval();
+                if !sleep_for.is_zero() {
+                    thread::sleep(sleep_for);
+                }
+            }
+        }
+
+        if !imdb_parents.is_empty() {
+            let imdb = ImdbProvider::default();
+            let valid_parents: std::collections::HashSet<String> =
+                imdb_parents.keys().cloned().collect();
+            let mut media_ids_to_merge = std::collections::HashSet::new();
+
+            imdb.fetch_all_episodes(&valid_parents, |ep| {
+                if let Some(parent_id) = ep
+                    .raw_json
+                    .as_ref()
+                    .and_then(|j| j.get("parentTconst"))
+                    .and_then(|v| v.as_str())
+                {
+                    if let Some(&media_id) = imdb_parents.get(parent_id) {
+                        if self
+                            .db
+                            .episodes()
+                            .upsert_episode_source_record_no_merge(&ep, media_id)
+                            .is_ok()
+                        {
+                            total_upserted += 1;
+                        }
+                        media_ids_to_merge.insert(media_id);
+                    }
+                }
+            })?;
+
+            for media_id in media_ids_to_merge {
+                let _ = self.db.episodes().merge_episodes_for_media(media_id);
+            }
+        }
+
+        Ok(total_upserted)
+    }
 }
 
 fn now_string() -> String {

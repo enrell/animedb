@@ -170,6 +170,91 @@ impl ImdbProvider {
         let resp = self.client.get(path).send()?.error_for_status()?;
         Ok(resp.bytes()?.to_vec())
     }
+
+    /// Downloads and parses the IMDb episode dump.
+    /// Only yields episodes for which the `parentTconst` is in `valid_parents`.
+    pub fn fetch_all_episodes<F>(
+        &self,
+        valid_parents: &std::collections::HashSet<String>,
+        mut callback: F,
+    ) -> Result<()>
+    where
+        F: FnMut(crate::model::CanonicalEpisode),
+    {
+        // 1. Download title.episode.tsv.gz
+        let eps_data = self.download("/title.episode.tsv.gz")?;
+
+        // Map from episode tconst -> (parentTconst, season, episode)
+        let mut ep_map: std::collections::HashMap<String, (String, i32, i32)> =
+            std::collections::HashMap::new();
+
+        let mut reader = std::io::BufReader::new(GzDecoder::new(eps_data.as_slice()));
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line); // skip header
+
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                break;
+            }
+            let trimmed = line.trim_end_matches(['\n', '\r']);
+            let parts: Vec<&str> = trimmed.split('\t').collect();
+            if parts.len() < 4 {
+                continue;
+            }
+            let tconst = parts[0];
+            let parent_id = parts[1];
+
+            if valid_parents.contains(parent_id) {
+                let season = parts[2].parse().unwrap_or(0);
+                let ep_num = parts[3].parse().unwrap_or(0);
+                ep_map.insert(tconst.to_string(), (parent_id.to_string(), season, ep_num));
+            }
+        }
+
+        if ep_map.is_empty() {
+            return Ok(());
+        }
+
+        // 2. Download title.basics.tsv.gz
+        let basics = self.download("/title.basics.tsv.gz")?;
+
+        for_each_basics_row(&basics, |row| {
+            if let Some((parent_id, season, ep_num)) = ep_map.get(row.tconst) {
+                let raw_json = serde_json::json!({
+                    "tconst": row.tconst,
+                    "parentTconst": parent_id,
+                    "seasonNumber": season,
+                    "episodeNumber": ep_num,
+                    "primaryTitle": row.primary_title,
+                    "originalTitle": row.original_title,
+                    "startYear": row.start_year,
+                    "runtimeMinutes": row.runtime_minutes,
+                });
+
+                let ep = crate::model::CanonicalEpisode {
+                    source: SourceName::Imdb,
+                    source_id: row.tconst.to_string(),
+                    media_kind: MediaKind::Show,
+                    season_number: (*season > 0).then_some(*season),
+                    episode_number: (*ep_num > 0).then_some(*ep_num),
+                    absolute_number: None,
+                    title_display: Some(row.primary_title.to_string()),
+                    title_original: row.original_title.map(str::to_string),
+                    synopsis: None,
+                    air_date: row.start_year.map(|y| y.to_string()),
+                    runtime_minutes: row.runtime_minutes,
+                    thumbnail_url: None,
+                    raw_titles_json: None,
+                    raw_json: Some(raw_json),
+                };
+                callback(ep);
+            }
+            RowAction::Continue
+        })?;
+
+        Ok(())
+    }
 }
 
 /// Action returned by the row visitor closure.

@@ -142,7 +142,12 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             );
 
             INSERT OR IGNORE INTO media_external_id_v3 (media_id, media_kind, source, source_id, url)
-            SELECT media_external_id.media_id, media.media_kind, media_external_id.source, media_external_id.source_id, media_external_id.url
+            SELECT
+                media_external_id.media_id,
+                media.media_kind,
+                media_external_id.source,
+                media_external_id.source_id,
+                media_external_id.url
             FROM media_external_id
             INNER JOIN media ON media.id = media_external_id.media_id;
 
@@ -173,7 +178,16 @@ pub fn migrate(conn: &Connection) -> Result<()> {
                 raw_json,
                 payload_hash
             )
-            SELECT source_record.media_id, media.media_kind, source_record.source, source_record.source_id, source_record.url, source_record.remote_updated_at, source_record.fetched_at, source_record.raw_json, source_record.payload_hash
+            SELECT
+                source_record.media_id,
+                media.media_kind,
+                source_record.source,
+                source_record.source_id,
+                source_record.url,
+                source_record.remote_updated_at,
+                source_record.fetched_at,
+                source_record.raw_json,
+                source_record.payload_hash
             FROM source_record
             INNER JOIN media ON media.id = source_record.media_id;
 
@@ -211,7 +225,12 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             );
 
             INSERT OR IGNORE INTO media_external_id_v3 (media_id, media_kind, source, source_id, url)
-            SELECT media_external_id.media_id, media.media_kind, media_external_id.source, media_external_id.source_id, media_external_id.url
+            SELECT
+                media_external_id.media_id,
+                media.media_kind,
+                media_external_id.source,
+                media_external_id.source_id,
+                media_external_id.url
             FROM media_external_id
             INNER JOIN media ON media.id = media_external_id.media_id;
 
@@ -242,7 +261,16 @@ pub fn migrate(conn: &Connection) -> Result<()> {
                 raw_json,
                 payload_hash
             )
-            SELECT source_record.media_id, media.media_kind, source_record.source, source_record.source_id, source_record.url, source_record.remote_updated_at, source_record.fetched_at, source_record.raw_json, source_record.payload_hash
+            SELECT
+                source_record.media_id,
+                media.media_kind,
+                source_record.source,
+                source_record.source_id,
+                source_record.url,
+                source_record.remote_updated_at,
+                source_record.fetched_at,
+                source_record.raw_json,
+                source_record.payload_hash
             FROM source_record
             INNER JOIN media ON media.id = source_record.media_id;
 
@@ -456,7 +484,8 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             CREATE INDEX episode_source_record_media_id_idx ON episode_source_record(media_id);
             CREATE INDEX episode_source_record_source_idx ON episode_source_record(source);
             CREATE INDEX episode_source_record_abs_num_idx ON episode_source_record(media_id, absolute_number);
-            CREATE INDEX episode_source_record_season_ep_idx ON episode_source_record(media_id, season_number, episode_number);
+            CREATE INDEX episode_source_record_season_ep_idx
+                ON episode_source_record(media_id, season_number, episode_number);
             CREATE INDEX episode_media_id_idx ON episode(media_id);
             CREATE INDEX episode_absolute_number_idx ON episode(media_id, absolute_number);
             CREATE INDEX episode_season_episode_idx ON episode(media_id, season_number, episode_number);

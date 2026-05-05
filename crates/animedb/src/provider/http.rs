@@ -50,7 +50,10 @@ impl HttpClient {
 
     /// Returns the shared `Client`, initializing it lazily on first call.
     pub fn client(&self) -> Result<Client> {
-        let mut guard = self.inner.lock().map_err(|_| Error::Sync("poisoned".into()))?;
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| Error::Sync("poisoned".into()))?;
         if guard.is_none() {
             let client = Client::builder()
                 .timeout(self.timeout)

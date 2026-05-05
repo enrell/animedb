@@ -139,6 +139,34 @@ impl Provider for TvmazeProvider {
 
         Ok(resp.into_iter().filter_map(into_canonical).collect())
     }
+
+    fn fetch_episodes(
+        &self,
+        media_kind: MediaKind,
+        source_id: &str,
+    ) -> Result<Vec<crate::model::CanonicalEpisode>> {
+        if media_kind != MediaKind::Show {
+            return Err(Error::Validation("TVmaze only supports shows".into()));
+        }
+
+        let resp = self
+            .client
+            .get(&format!("/shows/{}/episodes", source_id))
+            .send()?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(Vec::new());
+        }
+
+        let episodes: Vec<Episode> = resp.error_for_status()?.json()?;
+
+        let mut canonical = Vec::with_capacity(episodes.len());
+        for ep in episodes {
+            canonical.push(into_canonical_episode(ep, source_id)?);
+        }
+
+        Ok(canonical)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +270,33 @@ fn strip_html(html: &str) -> String {
         .to_string()
 }
 
+fn into_canonical_episode(ep: Episode, _source_id: &str) -> Result<crate::model::CanonicalEpisode> {
+    let raw = serde_json::to_value(&ep)?;
+
+    let synopsis = ep.summary.as_deref().map(strip_html);
+    let thumbnail_url = ep
+        .image
+        .as_ref()
+        .and_then(|img| img.original.clone().or_else(|| img.medium.clone()));
+
+    Ok(crate::model::CanonicalEpisode {
+        source: SourceName::Tvmaze,
+        source_id: ep.id.to_string(),
+        media_kind: MediaKind::Show,
+        season_number: ep.season,
+        episode_number: ep.number,
+        absolute_number: None, // TVmaze relies primarily on season/episode
+        title_display: Some(ep.name.clone()),
+        title_original: None,
+        synopsis,
+        air_date: ep.airdate,
+        runtime_minutes: ep.runtime,
+        thumbnail_url,
+        raw_titles_json: None,
+        raw_json: Some(raw),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Private response types
 // ---------------------------------------------------------------------------
@@ -311,4 +366,17 @@ struct Country {
 struct Externals {
     #[serde(default)]
     imdb: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Episode {
+    id: i64,
+    url: Option<String>,
+    name: String,
+    season: Option<i32>,
+    number: Option<i32>,
+    airdate: Option<String>,
+    runtime: Option<i32>,
+    image: Option<Image>,
+    summary: Option<String>,
 }

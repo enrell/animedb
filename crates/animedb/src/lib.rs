@@ -29,9 +29,9 @@ mod catalog;
 mod db;
 mod error;
 mod merge;
-pub use merge::{merge_media, merge_episode_source_records, provider_weight, MergeDecision};
 #[cfg(feature = "local-db")]
 pub use merge::make_provenance;
+pub use merge::{MergeDecision, merge_episode_source_records, merge_media, provider_weight};
 mod model;
 pub mod provider;
 mod remote;

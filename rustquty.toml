@@ -1,0 +1,29 @@
+[profile]
+default = "full"  # fast | full | deep
+
+[collectors]
+# Disable tools not installed
+mutants = false
+tests = false
+coverage = false
+deny = false
+audit = false
+hack = false
+
+[gate.loc]
+max_line_length = 120
+
+[gate.size]
+max_lines_per_file = 500
+max_lines_per_function = 100
+max_parameters_per_function = 8
+
+[gate.complexity]
+max_cyclomatic_per_function = 10
+max_nesting_depth = 5
+
+[gate.coverage]
+min_line_percent = 0.0
+
+[output]
+dir = "quality"

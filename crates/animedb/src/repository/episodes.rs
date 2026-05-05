@@ -27,7 +27,10 @@ impl<'a> EpisodeRepository<'a> {
     /// After inserting, automatically runs [`EpisodeRepository::merge_episodes_for_media`] to
     /// update the canonical `episode` table from all accumulated source records.
     /// Returns the `episode_source_record.id` of the inserted/updated row.
-    pub fn upsert_episode_source_record(
+    /// Inserts or updates a raw source episode record without triggering a merge.
+    ///
+    /// You must call [`EpisodeRepository::merge_episodes_for_media`] afterwards.
+    pub fn upsert_episode_source_record_no_merge(
         &mut self,
         episode: &CanonicalEpisode,
         media_id: i64,
@@ -87,10 +90,18 @@ impl<'a> EpisodeRepository<'a> {
 
         let source_record_id = self.conn.last_insert_rowid();
 
-        // Merge source records into canonical episodes
-        self.merge_episodes_for_media(media_id)?;
-
         Ok(source_record_id)
+    }
+
+    /// Inserts or updates a raw source episode record, and then merges it into the canonical table.
+    pub fn upsert_episode_source_record(
+        &mut self,
+        episode: &CanonicalEpisode,
+        media_id: i64,
+    ) -> Result<i64> {
+        let id = self.upsert_episode_source_record_no_merge(episode, media_id)?;
+        self.merge_episodes_for_media(media_id)?;
+        Ok(id)
     }
 
     /// Alias for [`upsert_episode_source_record`](EpisodeRepository::upsert_episode_source_record).

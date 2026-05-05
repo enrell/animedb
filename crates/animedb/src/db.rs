@@ -1,8 +1,7 @@
 use crate::error::{Error, Result};
 use crate::model::{
-    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, MediaDocument,
-    MediaKind, SearchHit, SearchOptions, SourceName, StoredEpisode, StoredMedia, SyncOutcome,
-    SyncReport, SyncRequest,
+    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, MediaDocument, MediaKind, SearchHit,
+    SearchOptions, SourceName, StoredEpisode, StoredMedia, SyncOutcome, SyncReport, SyncRequest,
 };
 use crate::provider::Provider;
 use crate::remote::{RemoteApi, RemoteSource};
@@ -114,6 +113,16 @@ impl AnimeDb {
     ) -> Result<MediaDocument> {
         self.search_repo()
             .media_document_by_external_id(source, source_id)
+    }
+
+    /// Looks up a list of episodes by external provider ID.
+    pub fn get_episodes_by_external_id(
+        &self,
+        source: SourceName,
+        source_id: &str,
+    ) -> Result<Vec<StoredEpisode>> {
+        let media = self.media().get_by_external_id(source, source_id)?;
+        self.episodes_for_media(media.id)
     }
 
     /// Returns a [`crate::sync::SyncService`] reference for orchestrating provider syncs.
@@ -334,7 +343,7 @@ impl AnimeDb {
 
         for episode in &episodes {
             self.episodes()
-                .upsert_episode_source_record(episode, media.id)?;
+                .upsert_episode_source_record_no_merge(episode, media.id)?;
         }
 
         // Merge all source records into canonical episodes
@@ -504,7 +513,10 @@ mod tests {
             title_english: Some("Monster".into()),
             title_native: Some("MONSTER".into()),
             synopsis: Some(
-                "Dr. Kenzo Tenma saves a child who grows into a serial killer, forcing him into a long pursuit across Europe while confronting guilt, identity and systemic corruption.".into(),
+                "Dr. Kenzo Tenma saves a child who grows into a serial killer, forcing him into a \
+                 long pursuit across Europe while confronting guilt, identity and systemic \
+                 corruption."
+                    .into(),
             ),
             format: Some("TV".into()),
             status: Some("Finished Airing".into()),
@@ -811,7 +823,11 @@ mod tests {
             title_romaji: None,
             title_english: Some("Breaking Bad".into()),
             title_native: None,
-            synopsis: Some("A high school chemistry teacher diagnosed with lung cancer turns to manufacturing methamphetamine.".into()),
+            synopsis: Some(
+                "A high school chemistry teacher diagnosed with lung cancer turns to \
+                 manufacturing methamphetamine."
+                    .into(),
+            ),
             format: None,
             status: Some("Ended".into()),
             season: Some("2008".into()),
@@ -820,7 +836,9 @@ mod tests {
             chapters: None,
             volumes: None,
             country_of_origin: Some("US".into()),
-            cover_image: Some("https://static.tvmaze.com/uploads/images/original_untouched/0/2000.jpg".into()),
+            cover_image: Some(
+                "https://static.tvmaze.com/uploads/images/original_untouched/0/2000.jpg".into(),
+            ),
             banner_image: None,
             provider_rating: Some(0.96),
             nsfw: false,
@@ -1620,16 +1638,6 @@ mod tests {
         // AniList does not implement fetch_episodes, so it returns a controlled error
         let anilist = AniListProvider::new();
         let result = anilist.fetch_episodes(MediaKind::Anime, "1");
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("does not support episode metadata"),
-            "got: {err_msg}"
-        );
-
-        // Jikan does not implement fetch_episodes
-        let jikan = JikanProvider::new();
-        let result = jikan.fetch_episodes(MediaKind::Anime, "1");
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(

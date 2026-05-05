@@ -214,6 +214,54 @@ impl Provider for JikanProvider {
             .map(relation_entry_into_canonical)
             .collect())
     }
+
+    fn fetch_episodes(
+        &self,
+        media_kind: MediaKind,
+        source_id: &str,
+    ) -> Result<Vec<crate::model::CanonicalEpisode>> {
+        if media_kind != MediaKind::Anime {
+            return Err(Error::Validation(
+                "Jikan episodes only supported for Anime".into(),
+            ));
+        }
+
+        let mal_id: i64 = source_id
+            .parse()
+            .map_err(|_| Error::Validation(format!("invalid Jikan/MAL id: {source_id}")))?;
+
+        let mut canonical = Vec::new();
+        let mut current_page = 1;
+
+        loop {
+            let resp = self
+                .client
+                .get(&format!("/anime/{}/episodes", mal_id))
+                .query(&[("page", current_page.to_string())])
+                .send()?;
+
+            if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                break;
+            }
+
+            let resp: EpisodeListResponse = resp.error_for_status()?.json()?;
+
+            for ep in resp.data {
+                canonical.push(into_canonical_episode(ep, source_id)?);
+            }
+
+            if let Some(pag) = resp.pagination {
+                if pag.has_next_page.unwrap_or(false) {
+                    current_page += 1;
+                    std::thread::sleep(self.min_interval());
+                    continue;
+                }
+            }
+            break;
+        }
+
+        Ok(canonical)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +452,34 @@ fn relation_entry_into_canonical(entry: RelationEntry) -> CanonicalMedia {
     }
 }
 
+fn into_canonical_episode(
+    ep: EpisodeItem,
+    _source_id: &str,
+) -> Result<crate::model::CanonicalEpisode> {
+    let raw = serde_json::to_value(&ep)?;
+
+    Ok(crate::model::CanonicalEpisode {
+        source: SourceName::Jikan,
+        source_id: ep.mal_id.to_string(),
+        media_kind: MediaKind::Anime,
+        season_number: None,                     // Jikan doesn't provide seasons
+        episode_number: None,                    // Fallback to absolute
+        absolute_number: Some(ep.mal_id as i32), // mal_id here is the episode number in the series
+        title_display: ep
+            .title
+            .clone()
+            .or_else(|| ep.title_english.clone())
+            .or_else(|| ep.title_japanese.clone()),
+        title_original: ep.title_japanese,
+        synopsis: None, // Jikan episodes list doesn't include synopsis
+        air_date: ep.aired,
+        runtime_minutes: None,
+        thumbnail_url: None,
+        raw_titles_json: None,
+        raw_json: Some(raw),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Jikan API Schemas (private) response types
 // ---------------------------------------------------------------------------
@@ -533,4 +609,26 @@ struct RelationEntry {
     kind: String,
     name: String,
     url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EpisodeListResponse {
+    #[serde(default)]
+    data: Vec<EpisodeItem>,
+    pagination: Option<Pagination>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EpisodeItem {
+    mal_id: i64,
+    url: Option<String>,
+    title: Option<String>,
+    title_japanese: Option<String>,
+    title_english: Option<String>,
+    title_romanji: Option<String>,
+    aired: Option<String>,
+    score: Option<f64>,
+    filler: Option<bool>,
+    recap: Option<bool>,
+    forum_url: Option<String>,
 }

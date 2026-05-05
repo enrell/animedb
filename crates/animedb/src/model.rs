@@ -194,7 +194,8 @@ pub struct SourcePayload {
     pub raw_json: Option<Value>,
 }
 
-/// Normalized media record as produced by a provider adapter and accepted by [`AnimeDb`](crate::db::AnimeDb)::upsert_media.
+/// Normalized media record as produced by a provider adapter and accepted by
+/// [`AnimeDb`](crate::db::AnimeDb)::upsert_media.
 ///
 /// This struct is the core domain type — it carries the canonical fields after
 /// provider-specific normalization but before any local merge. It must contain

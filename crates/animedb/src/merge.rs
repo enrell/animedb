@@ -67,7 +67,8 @@ pub fn score_text_field(
         value: value.to_string(),
         score: total,
         reason: format!(
-            "provider={provider_score:.3}, completeness={completeness_score:.3}, quality={field_quality_score:.3}, consistency={consistency_score:.3}"
+            "provider={provider_score:.3}, completeness={completeness_score:.3}, \
+             quality={field_quality_score:.3}, consistency={consistency_score:.3}"
         ),
     }
 }
@@ -87,7 +88,8 @@ pub fn score_optional_i32(
         value,
         score: total,
         reason: format!(
-            "provider={provider_score:.3}, completeness={completeness_score:.3}, numeric_quality={quality_score:.3}, consistency={consistency_score:.3}"
+            "provider={provider_score:.3}, completeness={completeness_score:.3}, \
+             numeric_quality={quality_score:.3}, consistency={consistency_score:.3}"
         ),
     }
 }
@@ -116,7 +118,9 @@ pub fn score_cover_image(
         value: value.to_string(),
         score: total,
         reason: format!(
-            "provider={provider_score:.3}, completeness={completeness_score:.3}, cover_quality={cover_quality_score:.3}, consistency={consistency_score:.3}, freshness={freshness_score:.3}"
+            "provider={provider_score:.3}, completeness={completeness_score:.3}, \
+             cover_quality={cover_quality_score:.3}, consistency={consistency_score:.3}, \
+             freshness={freshness_score:.3}"
         ),
     }
 }
