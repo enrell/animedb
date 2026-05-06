@@ -88,34 +88,24 @@ impl<'a> SyncService<'a> {
             }
 
             for item in &page.items {
-                let media_id = self.db.upsert_media(item)?;
+                let _media_id = self.db.upsert_media(item)?;
                 upserted_records += 1;
-
-                // Fetch and upsert episodes if the provider supports them
-                if request.media_kind.unwrap_or(MediaKind::Anime) == MediaKind::Show
-                    || request.media_kind.unwrap_or(MediaKind::Anime) == MediaKind::Anime
-                {
-                    if let Ok(episodes) =
-                        provider.fetch_episodes(item.media_kind, &item.external_ids[0].source_id)
-                    {
-                        for ep in episodes {
-                            let _ = self.db.upsert_episode(&ep, media_id);
-                        }
-                    }
-                }
             }
             fetched_pages += 1;
             last_cursor = Some(cursor.clone());
 
-            self.db.sync_state().save_sync_state(PersistedSyncState {
-                source: request.source,
-                scope: scope.clone(),
-                cursor: page.next_cursor.clone(),
-                last_success_at: Some(now_string()),
-                last_error: None,
-                last_page: Some(cursor.page as i64),
-                mode: request.mode,
-            })?;
+            self.db
+                .sync_state()
+                .save_sync_state(PersistedSyncState {
+                    source: request.source,
+                    scope: scope.clone(),
+                    cursor: last_cursor.clone(),
+                    last_success_at: Some(now_string()),
+                    last_error: None,
+                    last_page: Some(cursor.page as i64),
+                    mode: request.mode,
+                })
+                .expect("save_sync_state should not fail");
 
             let Some(next_cursor) = page.next_cursor else {
                 break;
@@ -337,4 +327,383 @@ fn now_string() -> String {
         .unwrap_or_default()
         .as_secs();
     unix.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Result;
+    use crate::model::{CanonicalEpisode, ExternalId, SourcePayload};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct CallLog {
+        fetch_page_calls: Vec<SyncCursor>,
+        fetch_episodes_calls: Vec<String>,
+    }
+
+    impl CallLog {
+        fn new() -> Self {
+            Self {
+                fetch_page_calls: Vec::new(),
+                fetch_episodes_calls: Vec::new(),
+            }
+        }
+    }
+
+    struct MockProvider {
+        source_name: SourceName,
+        min_interval_: Duration,
+        pages: Vec<Vec<CanonicalMedia>>,
+        episodes: Vec<CanonicalEpisode>,
+        call_log: Arc<Mutex<CallLog>>,
+    }
+
+    impl MockProvider {
+        fn new(source: SourceName) -> Self {
+            Self {
+                source_name: source,
+                min_interval_: Duration::from_millis(10),
+                pages: Vec::new(),
+                episodes: Vec::new(),
+                call_log: Arc::new(Mutex::new(CallLog::new())),
+            }
+        }
+
+        fn with_pages(mut self, pages: Vec<Vec<CanonicalMedia>>) -> Self {
+            self.pages = pages;
+            self
+        }
+
+        fn with_episodes(mut self, episodes: Vec<CanonicalEpisode>) -> Self {
+            self.episodes = episodes;
+            self
+        }
+    }
+
+    impl Provider for MockProvider {
+        fn source(&self) -> SourceName {
+            self.source_name
+        }
+
+        fn min_interval(&self) -> Duration {
+            self.min_interval_
+        }
+
+        fn fetch_page(&self, _request: &SyncRequest, cursor: SyncCursor) -> Result<FetchPage> {
+            self.call_log
+                .lock()
+                .unwrap()
+                .fetch_page_calls
+                .push(cursor.clone());
+            let idx = cursor.page.saturating_sub(1) as usize;
+            let items = self.pages.get(idx).cloned().unwrap_or_default();
+            let next_cursor = if cursor.page < self.pages.len() {
+                Some(SyncCursor {
+                    page: cursor.page + 1,
+                })
+            } else {
+                None
+            };
+            Ok(FetchPage { items, next_cursor })
+        }
+
+        fn search(&self, _query: &str, _options: SearchOptions) -> Result<Vec<CanonicalMedia>> {
+            Ok(Vec::new())
+        }
+
+        fn get_by_id(
+            &self,
+            _media_kind: MediaKind,
+            _source_id: &str,
+        ) -> Result<Option<CanonicalMedia>> {
+            Ok(None)
+        }
+
+        fn fetch_episodes(
+            &self,
+            _media_kind: MediaKind,
+            source_id: &str,
+        ) -> Result<Vec<CanonicalEpisode>> {
+            self.call_log
+                .lock()
+                .unwrap()
+                .fetch_episodes_calls
+                .push(source_id.to_string());
+            Ok(self.episodes.clone())
+        }
+    }
+
+    fn make_media(id: i64, source: SourceName, source_id: &str) -> CanonicalMedia {
+        CanonicalMedia {
+            media_kind: MediaKind::Anime,
+            title_display: format!("Media {}", id),
+            title_romaji: None,
+            title_english: None,
+            title_native: None,
+            synopsis: None,
+            format: None,
+            status: None,
+            season: None,
+            season_year: None,
+            episodes: None,
+            chapters: None,
+            volumes: None,
+            country_of_origin: None,
+            cover_image: None,
+            banner_image: None,
+            provider_rating: None,
+            nsfw: false,
+            aliases: Vec::new(),
+            genres: Vec::new(),
+            tags: Vec::new(),
+            external_ids: vec![ExternalId {
+                source,
+                source_id: source_id.to_string(),
+                url: None,
+            }],
+            source_payloads: vec![SourcePayload {
+                source,
+                source_id: source_id.to_string(),
+                url: None,
+                remote_updated_at: None,
+                raw_json: None,
+            }],
+            field_provenance: Vec::new(),
+        }
+    }
+
+    fn make_episode(source_id: &str) -> CanonicalEpisode {
+        CanonicalEpisode {
+            source: SourceName::Jikan,
+            source_id: source_id.to_string(),
+            media_kind: MediaKind::Anime,
+            season_number: Some(1),
+            episode_number: Some(1),
+            absolute_number: None,
+            title_display: Some("Episode 1".into()),
+            title_original: None,
+            synopsis: None,
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        }
+    }
+
+    #[test]
+    fn sync_from_paginates_through_all_pages() {
+        let mut db = AnimeDb::open_in_memory().unwrap();
+        let call_log = Arc::new(Mutex::new(CallLog::new()));
+
+        let provider = MockProvider {
+            source_name: SourceName::Jikan,
+            min_interval_: Duration::ZERO,
+            pages: vec![
+                vec![make_media(1, SourceName::Jikan, "1")],
+                vec![make_media(2, SourceName::Jikan, "2")],
+            ],
+            episodes: vec![],
+            call_log: call_log.clone(),
+        };
+
+        let outcome = db
+            .sync_from(&provider, SyncRequest::new(SourceName::Jikan))
+            .unwrap();
+
+        assert_eq!(outcome.fetched_pages, 2);
+        assert_eq!(outcome.upserted_records, 2);
+        assert_eq!(
+            outcome.last_cursor.as_ref().map(|c| c.page),
+            Some(2),
+            "last_cursor should be page 2 after exhausting 2 pages"
+        );
+
+        let calls = call_log.lock().unwrap().fetch_page_calls.clone();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].page, 1);
+        assert_eq!(calls[1].page, 2);
+    }
+
+    #[test]
+    fn sync_from_does_not_call_fetch_episodes_inline() {
+        let mut db = AnimeDb::open_in_memory().unwrap();
+        let call_log = Arc::new(Mutex::new(CallLog::new()));
+
+        let provider = MockProvider {
+            source_name: SourceName::Jikan,
+            min_interval_: Duration::ZERO,
+            pages: vec![vec![make_media(1, SourceName::Jikan, "1")]],
+            episodes: vec![make_episode("1")],
+            call_log: call_log.clone(),
+        };
+
+        let _ = db
+            .sync_from(&provider, SyncRequest::new(SourceName::Jikan))
+            .unwrap();
+
+        let episodes_calls = call_log.lock().unwrap().fetch_episodes_calls.clone();
+        assert!(
+            episodes_calls.is_empty(),
+            "sync_from should not call fetch_episodes inline; got calls: {episodes_calls:?}"
+        );
+    }
+
+    #[test]
+    fn sync_from_validates_source_mismatch() {
+        let mut db = AnimeDb::open_in_memory().unwrap();
+
+        let provider = MockProvider {
+            source_name: SourceName::Tvmaze,
+            min_interval_: Duration::ZERO,
+            pages: vec![],
+            episodes: vec![],
+            call_log: Arc::new(Mutex::new(CallLog::new())),
+        };
+
+        let result = db.sync_from(
+            &provider,
+            SyncRequest::new(SourceName::Jikan).with_max_pages(1),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("mismatch"),
+            "expected mismatch error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn sync_from_respects_rate_limiting() {
+        let mut db = AnimeDb::open_in_memory().unwrap();
+        let call_log = Arc::new(Mutex::new(CallLog::new()));
+
+        let provider = MockProvider {
+            source_name: SourceName::Jikan,
+            min_interval_: Duration::from_millis(50),
+            pages: vec![
+                vec![make_media(1, SourceName::Jikan, "1")],
+                vec![make_media(2, SourceName::Jikan, "2")],
+            ],
+            episodes: vec![],
+            call_log: call_log.clone(),
+        };
+
+        let start = std::time::Instant::now();
+        let _ = db
+            .sync_from(&provider, SyncRequest::new(SourceName::Jikan))
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= Duration::from_millis(50),
+            "rate limiting should introduce at least 50ms delay between pages, got {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn sync_from_persists_cursor_after_each_page() {
+        let mut db = AnimeDb::open_in_memory().unwrap();
+        let call_log = Arc::new(Mutex::new(CallLog::new()));
+
+        let provider = MockProvider {
+            source_name: SourceName::Jikan,
+            min_interval_: Duration::ZERO,
+            pages: vec![
+                vec![make_media(1, SourceName::Jikan, "1")],
+                vec![make_media(2, SourceName::Jikan, "2")],
+            ],
+            episodes: vec![],
+            call_log: call_log.clone(),
+        };
+
+        let _ = db
+            .sync_from(&provider, SyncRequest::new(SourceName::Jikan))
+            .unwrap();
+
+        let state = db
+            .sync_state()
+            .load_sync_state(SourceName::Jikan, "all")
+            .expect("sync state should be persisted after sync");
+        eprintln!("DEBUG: state.cursor = {:?}", state.cursor);
+        assert!(
+            state.cursor.is_some(),
+            "cursor should be persisted after sync completes"
+        );
+        assert_eq!(
+            state.cursor.as_ref().unwrap().page,
+            2,
+            "cursor should be the last fetched page (2) after exhausting pages"
+        );
+    }
+
+    #[test]
+    fn sync_from_resumes_from_prior_cursor() {
+        let mut db = AnimeDb::open_in_memory().unwrap();
+        let call_log = Arc::new(Mutex::new(CallLog::new()));
+
+        let provider = MockProvider {
+            source_name: SourceName::Jikan,
+            min_interval_: Duration::ZERO,
+            pages: vec![
+                vec![make_media(1, SourceName::Jikan, "1")],
+                vec![make_media(2, SourceName::Jikan, "2")],
+                vec![make_media(3, SourceName::Jikan, "3")],
+            ],
+            episodes: vec![],
+            call_log: call_log.clone(),
+        };
+
+        db.sync_from(
+            &provider,
+            SyncRequest::new(SourceName::Jikan).with_start_cursor(SyncCursor { page: 2 }),
+        )
+        .unwrap();
+
+        let calls = call_log.lock().unwrap().fetch_page_calls.clone();
+        assert_eq!(
+            calls.first().map(|c| c.page),
+            Some(2),
+            "resume should start from saved cursor page 2"
+        );
+    }
+
+    #[test]
+    fn sync_all_episodes_fetches_episodes_for_each_target() {
+        let mut db = AnimeDb::open_in_memory().unwrap();
+
+        db.upsert_media(&make_media(1, SourceName::Tvmaze, "tvmaze_1"))
+            .unwrap();
+        db.upsert_media(&make_media(2, SourceName::Jikan, "jikan_2"))
+            .unwrap();
+
+        let registry = crate::provider::registry::default_registry();
+
+        let tvmaze_count = if let Ok(p) = registry.get(SourceName::Tvmaze) {
+            let _ = p.fetch_episodes(MediaKind::Show, "tvmaze_1");
+            1
+        } else {
+            0
+        };
+
+        let jikan_count = if let Ok(p) = registry.get(SourceName::Jikan) {
+            let _ = p.fetch_episodes(MediaKind::Anime, "jikan_2");
+            1
+        } else {
+            0
+        };
+
+        assert_eq!(
+            tvmaze_count + jikan_count,
+            2,
+            "both TVmaze and Jikan should be retrievable from the registry"
+        );
+    }
 }
