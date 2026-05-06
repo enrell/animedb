@@ -126,7 +126,8 @@ pass "CHECK constraints include 'show' and 'movie'"
 section "TEST 2: TVmaze Sync (Shows)"
 
 log "Syncing 2 pages from TVmaze (page size: 10)..."
-cargo run --release --example e2e_test_runner -- "$DB_PATH" --sync-tvmaze --pages 2 --page-size 10 2>&1 | tee -a "$LOG_FILE"
+cargo run --release --example e2e_test_runner -- "$DB_PATH" \
+    --sync-tvmaze --pages 2 --page-size 10 2>&1 | tee -a "$LOG_FILE"
 
 # Count shows in database
 SHOW_COUNT=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM media WHERE media_kind = 'show';" 2>/dev/null)
@@ -148,7 +149,11 @@ pass "Show record has title_display"
 
 # Verify external_ids for TVmaze
 SHOW_ID=$(echo "$FIRST_SHOW" | cut -d'|' -f1)
-TVMAZE_EXT_ID=$(sqlite3 "$DB_PATH" "SELECT source_id FROM media_external_id WHERE media_id = $SHOW_ID AND source = 'tvmaze';" 2>/dev/null)
+TVMAZE_EXT_ID=$(
+    sqlite3 "$DB_PATH" \
+        "SELECT source_id FROM media_external_id WHERE media_id = $SHOW_ID AND source = 'tvmaze';" \
+        2>/dev/null
+)
 log "TVmaze external ID: $TVMAZE_EXT_ID"
 
 if [ -z "$TVMAZE_EXT_ID" ]; then
@@ -167,7 +172,9 @@ log "Note: IMDb sync downloads title.basics.tsv.gz (~100MB) and title.ratings.ts
 log "This may take a minute..."
 
 # Use a timeout for IMDb sync since it downloads large files
-timeout 300 cargo run --release --example e2e_test_runner -- "$DB_PATH" --sync-imdb --media-kind movie --pages 1 --page-size 50 2>&1 | tee -a "$LOG_FILE" || {
+timeout 300 cargo run --release --example e2e_test_runner -- "$DB_PATH" \
+    --sync-imdb --media-kind movie --pages 1 --page-size 50 2>&1 \
+    | tee -a "$LOG_FILE" || {
     warn "IMDb sync timed out or failed (this is expected in constrained environments)"
     warn "Skipping IMDb tests..."
     SKIP_IMDB=1
@@ -185,12 +192,20 @@ if [ "$SKIP_IMDB" != "1" ]; then
     fi
 
     # Verify movie has IMDB external ID
-    FIRST_MOVIE=$(sqlite3 "$DB_PATH" "SELECT id, title_display, season_year FROM media WHERE media_kind = 'movie' LIMIT 1;" 2>/dev/null)
+    FIRST_MOVIE=$(
+        sqlite3 "$DB_PATH" \
+            "SELECT id, title_display, season_year FROM media WHERE media_kind = 'movie' LIMIT 1;" \
+            2>/dev/null
+    )
     log "First movie: $FIRST_MOVIE"
 
     if [ -n "$FIRST_MOVIE" ]; then
         MOVIE_ID=$(echo "$FIRST_MOVIE" | cut -d'|' -f1)
-        IMDB_EXT_ID=$(sqlite3 "$DB_PATH" "SELECT source_id FROM media_external_id WHERE media_id = $MOVIE_ID AND source = 'imdb';" 2>/dev/null)
+        IMDB_EXT_ID=$(
+            sqlite3 "$DB_PATH" \
+                "SELECT source_id FROM media_external_id WHERE media_id = $MOVIE_ID AND source = 'imdb';" \
+                2>/dev/null
+        )
         log "IMDb external ID: $IMDB_EXT_ID"
 
         if [ -z "$IMDB_EXT_ID" ]; then
@@ -290,7 +305,10 @@ fi
 section "TEST 6: Remote Search via TVmaze API"
 
 log "Searching TVmaze API for 'breaking bad'..."
-TVMAZE_SEARCH=$(cargo run --release --example e2e_test_runner -- "$DB_PATH" --remote-search "breaking bad" 2>&1 | tee -a "$LOG_FILE" || echo "")
+TVMAZE_SEARCH=$(
+    cargo run --release --example e2e_test_runner -- "$DB_PATH" \
+        --remote-search "breaking bad" 2>&1 | tee -a "$LOG_FILE" || echo ""
+)
 
 if echo "$TVMAZE_SEARCH" | grep -q "Breaking Bad"; then
     pass "TVmaze remote search found 'Breaking Bad'"
@@ -322,9 +340,12 @@ else
 fi
 
 log "Testing GraphQL query: shows..."
+GRAPHQL_PAYLOAD='{"query":"{ search(query: \"the\", options: { limit: 5, mediaKind: SHOW })'
+GRAPHQL_PAYLOAD+=' { mediaId titleDisplay mediaKind } }"}'
 GRAPHQL_RESULT=$(curl -s -X POST http://127.0.0.1:18080/graphql \
     -H "Content-Type: application/json" \
-    -d '{"query": "{ search(query: \"the\", options: { limit: 5, mediaKind: SHOW }) { mediaId titleDisplay mediaKind } }"}' 2>/dev/null || echo "")
+    -d "$GRAPHQL_PAYLOAD" \
+    2>/dev/null || echo "")
 
 log "GraphQL result: $GRAPHQL_RESULT"
 
@@ -366,7 +387,11 @@ kill $API_PID 2>/dev/null || true
 section "TEST 8: Source Record Tracking"
 
 log "Checking source_record table..."
-SOURCE_RECORDS=$(sqlite3 "$DB_PATH" "SELECT source, COUNT(*) as count FROM source_record GROUP BY source;" 2>/dev/null || echo "")
+SOURCE_RECORDS=$(
+    sqlite3 "$DB_PATH" \
+        "SELECT source, COUNT(*) as count FROM source_record GROUP BY source;" \
+        2>/dev/null || echo ""
+)
 
 log "Source records by provider:"
 echo "$SOURCE_RECORDS" | while read line; do
@@ -380,7 +405,11 @@ else
 fi
 
 # Verify raw_json is stored
-RAW_JSON_CHECK=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM source_record WHERE raw_json IS NOT NULL;" 2>/dev/null || echo "0")
+RAW_JSON_CHECK=$(
+    sqlite3 "$DB_PATH" \
+        "SELECT COUNT(*) FROM source_record WHERE raw_json IS NOT NULL;" \
+        2>/dev/null || echo "0"
+)
 log "Records with raw_json: $RAW_JSON_CHECK"
 
 if [ "$RAW_JSON_CHECK" -gt 0 ]; then
@@ -396,7 +425,11 @@ fi
 section "TEST 9: Sync State Persistence"
 
 log "Checking sync_state table..."
-SYNC_STATES=$(sqlite3 "$DB_PATH" "SELECT source, scope, last_page, last_success_at FROM sync_state;" 2>/dev/null || echo "")
+SYNC_STATES=$(
+    sqlite3 "$DB_PATH" \
+        "SELECT source, scope, last_page, last_success_at FROM sync_state;" \
+        2>/dev/null || echo ""
+)
 
 log "Sync states:"
 echo "$SYNC_STATES" | while read line; do

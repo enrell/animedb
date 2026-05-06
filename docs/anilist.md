@@ -3,7 +3,8 @@
 **Base URL:** `https://graphql.anilist.co`
 **API Type:** GraphQL (POST only)
 
-This document tracks the implementation status of all AniList GraphQL API operations in `crates/animedb/src/provider.rs`.
+This document tracks the implementation status of all AniList GraphQL API
+operations in `crates/animedb/src/provider.rs`.
 
 ---
 
@@ -210,8 +211,10 @@ The `AniListProvider` struct implements the `RemoteProvider` trait with three co
 ## Notes
 
 - **Rate Limit:** AniList allows 90 requests per minute. The `min_interval()` is set to 700ms.
-- **API Type:** AniList is a GraphQL API — all requests are POST to `https://graphql.anilist.co` with a JSON body containing `query` and `variables`.
+- **API Type:** AniList is a GraphQL API. All requests are POST to
+  `https://graphql.anilist.co` with a JSON body containing `query` and `variables`.
 - **Auth:** Currently no authentication is implemented (public queries only).
 - **Pagination:** Cursor-based pagination via `Page.pageInfo.hasNextPage`.
 - **MediaType enum:** Values are `ANIME`, `MANGA`.
-- **MediaSort enum:** Values include `ID`, `TITLE_ROMAJI`, `TITLE_ENGLISH`, `START_DATE`, `POPULARITY_DESC`, `SCORE_DESC`, `TRENDING_DESC`, etc.
+- **MediaSort enum:** Values include `ID`, `TITLE_ROMAJI`, `TITLE_ENGLISH`,
+  `START_DATE`, `POPULARITY_DESC`, `SCORE_DESC`, `TRENDING_DESC`, etc.

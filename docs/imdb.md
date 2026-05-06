@@ -3,13 +3,16 @@
 **Source:** IMDb plain text dataset files (TSV)
 **Download:** `https://datasets.imdbws.com/`
 
-This document tracks the implementation status of all IMDb dataset operations in `crates/animedb/src/provider.rs`.
+This document tracks the implementation status of all IMDb dataset operations in
+`crates/animedb/src/provider.rs`.
 
 ---
 
 ## Overview
 
-The `ImdbProvider` does **not** use a traditional REST API. Instead, it downloads and parses IMDb's publicly available dataset files (TSV format, gzip-compressed). These files are published by IMDb and updated regularly.
+The `ImdbProvider` does **not** use a traditional REST API. Instead, it downloads
+and parses IMDb's publicly available dataset files (TSV format, gzip-compressed).
+These files are published by IMDb and updated regularly.
 
 The `RemoteProvider` trait is implemented with:
 
@@ -127,8 +130,8 @@ The following types are **skipped** during import:
 
 | Operation | Description | Status |
 |-----------|-------------|--------|
-| Parse episode data | Load parent series ID, season, episode number | ❌ Not Implemented |
-| Build episode hierarchy | Map episodes to parent show | ❌ Not Implemented |
+| Parse episode data | Load parent series ID, season, episode number | ✅ Full |
+| Build episode hierarchy | Map episodes to parent show | ✅ Full |
 | Handle specials | Map `seasonNumber`, `episodeNumber` | ❌ Not Implemented |
 
 ### name.basics.tsv (People)
@@ -144,8 +147,11 @@ The following types are **skipped** during import:
 
 - **No rate limit** — IMDb datasets are downloaded files, not an API. `min_interval()` is `ZERO`.
 - **Dataset refresh:** IMDb updates their dataset files daily. New downloads reflect current data.
-- **Pagination:** Sequential line-based pagination over the gzip-compressed TSV file. No efficient seeking — each page re-downloads and re-scans from the beginning of `title.basics.tsv.gz`.
+- **Pagination:** Sequential line-based pagination over the gzip-compressed TSV
+  file. No efficient seeking; each page re-downloads and re-scans from the
+  beginning of `title.basics.tsv.gz`.
 - **Search performance:** O(n) linear scan — search reads through the entire dataset for every query.
 - **Adult content filter:** The `isAdult` flag is mapped to the `nsfw` field.
-- **External IDs:** The `tconst` (e.g., `tt1234567`) is stored as the source ID, with IMDb URL `https://www.imdb.com/title/{tconst}/`.
+- **External IDs:** The `tconst` (e.g., `tt1234567`) is stored as the source ID,
+  with IMDb URL `https://www.imdb.com/title/{tconst}/`.
 - **Data freshness:** IMDb dataset files are refreshed daily but do not reflect real-time changes.

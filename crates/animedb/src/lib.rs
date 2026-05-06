@@ -58,7 +58,7 @@ pub use provider::{
     TvmazeProvider,
 };
 
-pub use remote::{RemoteApi, RemoteCollection, RemoteSource};
+pub use remote::{EpisodeFetchCandidate, RemoteApi, RemoteCollection, RemoteSource};
 
 // Re-export sync-related types — they are pure data, no SQLite needed.
 pub use model::{PersistedSyncState, SyncCursor, SyncMode, SyncOutcome, SyncReport, SyncRequest};

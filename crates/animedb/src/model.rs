@@ -93,10 +93,10 @@ impl FromStr for MediaKind {
 /// | Source  | Anime | Manga | Show | Movie | Episodes | Trending | Relations |
 /// |---------|:-----:|:-----:|:----:|:-----:|:--------:|:--------:|:--------:|
 /// | AniList |  Y   |   Y   |  N   |   N   |    N     |    Y     |    Y     |
-/// | Jikan   |  Y   |   Y   |  N   |   N   |    N     |    N     |    N     |
+/// | Jikan   |  Y   |   Y   |  N   |   N   |    Y     |    N     |    N     |
 /// | Kitsu   |  Y   |   Y   |  N   |   N   |    Y     |    Y     |    N     |
-/// | TVmaze  |  N   |   N   |  Y   |   N   |    N     |    N     |    N     |
-/// | IMDb   |  N   |   N   |  Y   |   Y   |    N     |    N     |    N     |
+/// | TVmaze  |  N   |   N   |  Y   |   N   |    Y     |    N     |    N     |
+/// | IMDb   |  N   |   N   |  Y   |   Y   |  Bulk    |    N     |    N     |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceName {

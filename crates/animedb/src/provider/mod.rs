@@ -117,8 +117,9 @@ pub trait Provider: Send + Sync {
 
     /// Fetches episode metadata for a given media item.
     ///
-    /// Not all providers expose episode data. Kitsu is the only built-in provider
-    /// that implements this method; all others return a validation error.
+    /// Not all providers expose single-media episode data. Jikan, Kitsu, and TVmaze
+    /// implement this method. AniList returns a validation error, and IMDb episode data
+    /// is available through bulk dataset ingestion rather than this per-media endpoint.
     fn fetch_episodes(
         &self,
         _media_kind: MediaKind,

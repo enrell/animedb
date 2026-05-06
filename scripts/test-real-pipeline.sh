@@ -82,28 +82,41 @@ docker run -d --rm \
 wait_for_health
 
 echo "==> syncing real data through graphql api"
-anilist_sync="$(graphql "{\"query\":\"mutation { syncDatabase(input: { source: ANILIST, mediaKind: ANIME, maxPages: ${MAX_PAGES}, pageSize: ${PAGE_SIZE} }) { totalUpsertedRecords outcomes { source upsertedRecords fetchedPages } } }\"}")"
+SYNC_FIELDS="totalUpsertedRecords outcomes { source upsertedRecords fetchedPages }"
+anilist_query="mutation { syncDatabase(input: { source: ANILIST, mediaKind: ANIME,"
+anilist_query+=" maxPages: ${MAX_PAGES}, pageSize: ${PAGE_SIZE} }) { ${SYNC_FIELDS} } }"
+anilist_sync="$(graphql "{\"query\":\"${anilist_query}\"}")"
 assert_contains "$anilist_sync" "\"ANILIST\""
 assert_contains "$anilist_sync" "\"totalUpsertedRecords\""
 
-jikan_sync="$(graphql "{\"query\":\"mutation { syncDatabase(input: { source: JIKAN, mediaKind: ANIME, maxPages: ${MAX_PAGES}, pageSize: ${PAGE_SIZE} }) { totalUpsertedRecords outcomes { source upsertedRecords fetchedPages } } }\"}")"
+jikan_query="mutation { syncDatabase(input: { source: JIKAN, mediaKind: ANIME,"
+jikan_query+=" maxPages: ${MAX_PAGES}, pageSize: ${PAGE_SIZE} }) { ${SYNC_FIELDS} } }"
+jikan_sync="$(graphql "{\"query\":\"${jikan_query}\"}")"
 assert_contains "$jikan_sync" "\"JIKAN\""
 assert_contains "$jikan_sync" "\"totalUpsertedRecords\""
 
-kitsu_sync="$(graphql "{\"query\":\"mutation { syncDatabase(input: { source: KITSU, mediaKind: ANIME, maxPages: ${MAX_PAGES}, pageSize: ${PAGE_SIZE} }) { totalUpsertedRecords outcomes { source upsertedRecords fetchedPages } } }\"}")"
+kitsu_query="mutation { syncDatabase(input: { source: KITSU, mediaKind: ANIME,"
+kitsu_query+=" maxPages: ${MAX_PAGES}, pageSize: ${PAGE_SIZE} }) { ${SYNC_FIELDS} } }"
+kitsu_sync="$(graphql "{\"query\":\"${kitsu_query}\"}")"
 assert_contains "$kitsu_sync" "\"KITSU\""
 assert_contains "$kitsu_sync" "\"totalUpsertedRecords\""
 
 echo "==> querying local graphql data"
-media_lookup="$(graphql '{"query":"query { mediaByExternalId(source: ANILIST, sourceId: \"1\") { id name titleDisplay externalIds { source sourceId } } }"}')"
+media_query="query { mediaByExternalId(source: ANILIST, sourceId: \\\"1\\\")"
+media_query+=" { id name titleDisplay externalIds { source sourceId } } }"
+media_lookup="$(graphql "{\"query\":\"${media_query}\"}")"
 assert_contains "$media_lookup" "\"titleDisplay\""
 assert_contains "$media_lookup" "\"ANILIST\""
 
 echo "==> querying remote graphql data"
-remote_lookup="$(graphql '{"query":"query { remoteSearch(source: ANILIST, query: \"monster\", options: { mediaKind: ANIME, limit: 1 }) { titleDisplay } }"}')"
+remote_query="query { remoteSearch(source: ANILIST, query: \\\"monster\\\","
+remote_query+=" options: { mediaKind: ANIME, limit: 1 }) { titleDisplay } }"
+remote_lookup="$(graphql "{\"query\":\"${remote_query}\"}")"
 assert_contains "$remote_lookup" "\"titleDisplay\""
 
-remote_kitsu_lookup="$(graphql '{"query":"query { remoteSearch(source: KITSU, query: \"monster\", options: { mediaKind: ANIME, limit: 1 }) { titleDisplay nsfw } }"}')"
+remote_kitsu_query="query { remoteSearch(source: KITSU, query: \\\"monster\\\","
+remote_kitsu_query+=" options: { mediaKind: ANIME, limit: 1 }) { titleDisplay nsfw } }"
+remote_kitsu_lookup="$(graphql "{\"query\":\"${remote_kitsu_query}\"}")"
 assert_contains "$remote_kitsu_lookup" "\"titleDisplay\""
 
 echo "==> real pipeline ok"

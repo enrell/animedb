@@ -1,6 +1,7 @@
 # AnimeDB Reference
 
-Reference for the Rust workspace, the library crates, and the GraphQL service that ships with this repository.
+Reference for the Rust workspace, the library crates, and the GraphQL service
+that ships with this repository.
 
 ## Workspace
 
@@ -56,6 +57,32 @@ let provider = registry.get(SourceName::AniList)?;
 let results = provider.search("monster", Default::default())?;
 ```
 
+Episode metadata can be fetched through one provider or aggregated from the
+external IDs on a merged media record:
+
+```rust
+use animedb::{AnimeDb, MediaKind, RemoteApi};
+
+let media = RemoteApi::jikan().anime_metadata().by_id("19")?.unwrap();
+let provider_records =
+    RemoteApi::fetch_episodes_from_external_ids(MediaKind::Anime, &media.external_ids)?;
+
+let direct = RemoteApi::jikan().anime_metadata().episodes("19")?;
+```
+
+For local catalogs, use the unified storage path to fetch all episode-capable
+sources and merge them into canonical `StoredEpisode` rows:
+
+```rust
+use animedb::{AnimeDb, SourceName};
+
+let mut db = AnimeDb::open("/tmp/animedb.sqlite")?;
+let episodes =
+    db.fetch_and_store_episodes_by_external_id(SourceName::Jikan, "19")?;
+```
+
 ## Migration Note
 
-The library handles SQLite migrations automatically in `AnimeDb::open`. The database version is tracked via `user_version` in the SQLite file. Migrations are now encapsulated in `crates/animedb/src/schema.rs`.
+The library handles SQLite migrations automatically in `AnimeDb::open`.
+The database version is tracked via `user_version` in the SQLite file.
+Migrations are now encapsulated in `crates/animedb/src/schema.rs`.

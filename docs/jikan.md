@@ -3,7 +3,8 @@
 **Base URL:** `https://api.jikan.moe/v4`
 **Base API Path:** `/v4`
 
-This document tracks the implementation status of all Jikan API endpoints in `crates/animedb/src/provider.rs`.
+This document tracks the implementation status of all Jikan API endpoints in
+`crates/animedb/src/provider.rs`.
 
 ---
 
@@ -39,7 +40,7 @@ The `JikanProvider` struct implements the `RemoteProvider` trait with three core
 | Full Details | GET | `/anime/{id}/full` | — | ❌ Not Implemented |
 | Character Cast | GET | `/anime/{id}/characters` | — | ❌ Not Implemented |
 | Staff List | GET | `/anime/{id}/staff` | — | ❌ Not Implemented |
-| Episode List | GET | `/anime/{id}/episodes` | `page` | ❌ Not Implemented |
+| Episode List | GET | `/anime/{id}/episodes` | `page` | ✅ Full |
 | Specific Episode | GET | `/anime/{id}/episodes/{episodeId}` | — | ❌ Not Implemented |
 | News Articles | GET | `/anime/{id}/news` | — | ❌ Not Implemented |
 | Forum Threads | GET | `/anime/{id}/forum` | — | ❌ Not Implemented |
@@ -268,6 +269,7 @@ The `JikanProvider` struct implements the `RemoteProvider` trait with three core
 
 ## Notes
 
-- **Rate Limit:** Jikan has a limit of 3 requests per second and 60 requests per minute per IP. The `min_interval()` is set to 1100ms to respect this.
+- **Rate Limit:** Jikan has a limit of 3 requests per second and 60 requests per
+  minute per IP. The `min_interval()` is set to 1100ms to respect this.
 - **sfw parameter:** The current implementation sets `sfw=false` to allow adult content. This should be configurable.
 - **Base URL:** The official public instance is `https://api.jikan.moe/v4`. Self-hosted instances are also available.

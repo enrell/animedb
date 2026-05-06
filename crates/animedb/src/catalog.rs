@@ -4,7 +4,7 @@
 //! without requiring the `local-db` feature or any SQLite dependency.
 
 use crate::error::Result;
-use crate::model::{CanonicalMedia, MediaKind, SearchOptions};
+use crate::model::{CanonicalEpisode, CanonicalMedia, MediaKind, SearchOptions};
 use crate::provider::{AniListProvider, Provider};
 
 /// Remote-first facade over a single metadata provider.
@@ -42,6 +42,15 @@ impl<P: Provider> RemoteCatalog<P> {
     /// Free-text search across the provider's full catalog.
     pub fn search(&self, query: &str, options: SearchOptions) -> Result<Vec<CanonicalMedia>> {
         self.provider.search(query, options)
+    }
+
+    /// Fetches episode metadata directly from this provider.
+    pub fn fetch_episodes(
+        &self,
+        media_kind: MediaKind,
+        source_id: &str,
+    ) -> Result<Vec<CanonicalEpisode>> {
+        self.provider.fetch_episodes(media_kind, source_id)
     }
 
     /// Returns a collection filtered to anime records.
@@ -132,5 +141,11 @@ impl<'a, P: Provider> RemoteMetadataCollection<'a, P> {
                 })
                 .unwrap_or(true)
         }))
+    }
+
+    /// Fetches episode metadata for a provider-native media ID within this collection.
+    pub fn episodes(&self, source_id: &str) -> Result<Vec<CanonicalEpisode>> {
+        let kind = self.options.media_kind.unwrap_or(MediaKind::Anime);
+        self.provider.fetch_episodes(kind, source_id)
     }
 }

@@ -289,6 +289,22 @@ impl AnimeDb {
         )
     }
 
+    /// Returns a filtered query facade for TV show records.
+    pub fn show_metadata(&self) -> MetadataCollection<'_> {
+        MetadataCollection::new(
+            self,
+            SearchOptions::default().with_media_kind(MediaKind::Show),
+        )
+    }
+
+    /// Returns a filtered query facade for movie records.
+    pub fn tv_movie_metadata(&self) -> MetadataCollection<'_> {
+        MetadataCollection::new(
+            self,
+            SearchOptions::default().with_media_kind(MediaKind::Movie),
+        )
+    }
+
     /// Inserts a source episode record, then merges to update canonical episodes.
 
     /// Backward-compatible alias for `upsert_episode_source_record`.
@@ -341,15 +357,58 @@ impl AnimeDb {
 
         let episodes = provider.fetch_episodes(media.media_kind, source_id)?;
 
-        for episode in &episodes {
+        self.store_episode_source_records(media.id, &episodes)
+    }
+
+    /// Fetches episodes from every episode-capable provider ID on a stored media record.
+    ///
+    /// This is the unified local-first episode enrichment path. It uses the media record's
+    /// merged external IDs to query all supported episode sources, stores each successful
+    /// provider response as an episode source record, then runs one canonical merge.
+    pub fn fetch_and_store_episodes_for_media(
+        &mut self,
+        media_id: i64,
+    ) -> Result<Vec<StoredEpisode>> {
+        let media = self.get_media(media_id)?;
+        let episodes =
+            RemoteApi::fetch_episodes_from_external_ids(media.media_kind, &media.external_ids)?;
+
+        self.store_episode_source_records(media.id, &episodes)
+    }
+
+    /// Finds a media record by external ID, then fetches and stores episodes from all
+    /// episode-capable source IDs attached to that merged record.
+    pub fn fetch_and_store_episodes_by_external_id(
+        &mut self,
+        source: SourceName,
+        source_id: &str,
+    ) -> Result<Vec<StoredEpisode>> {
+        let media = self
+            .media()
+            .get_by_external_id_and_kind(source, MediaKind::Anime, source_id)
+            .or_else(|_| {
+                self.media()
+                    .get_by_external_id_and_kind(source, MediaKind::Show, source_id)
+            })?;
+
+        let episodes =
+            RemoteApi::fetch_episodes_from_external_ids(media.media_kind, &media.external_ids)?;
+
+        self.store_episode_source_records(media.id, &episodes)
+    }
+
+    fn store_episode_source_records(
+        &mut self,
+        media_id: i64,
+        episodes: &[CanonicalEpisode],
+    ) -> Result<Vec<StoredEpisode>> {
+        for episode in episodes {
             self.episodes()
-                .upsert_episode_source_record_no_merge(episode, media.id)?;
+                .upsert_episode_source_record_no_merge(episode, media_id)?;
         }
 
-        // Merge all source records into canonical episodes
-        self.episodes().merge_episodes_for_media(media.id)?;
-
-        self.episodes().episodes_for_media(media.id)
+        self.episodes().merge_episodes_for_media(media_id)?;
+        self.episodes().episodes_for_media(media_id)
     }
 }
 
