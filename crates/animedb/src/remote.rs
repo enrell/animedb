@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
+use crate::merge::merge_canonical_episodes_by_effective_number;
 use crate::model::{
     CanonicalEpisode, CanonicalMedia, ExternalId, MediaKind, SearchOptions, SourceName,
 };
@@ -214,6 +215,20 @@ impl RemoteApi {
         Self::fetch_episodes_from_candidates(media_kind, &candidates)
     }
 
+    /// Fetches and merges episode metadata from every episode-capable source ID.
+    ///
+    /// This is the remote-only path for applications that do not want animedb's local SQLite
+    /// episode repository. Provider responses are aggregated, grouped by flat effective episode
+    /// number (`absolute_number.or(episode_number)`), and merged field-by-field using animedb's
+    /// episode provider priority.
+    pub fn fetch_merged_episodes_from_external_ids(
+        media_kind: MediaKind,
+        external_ids: &[ExternalId],
+    ) -> Result<Vec<CanonicalEpisode>> {
+        let episodes = Self::fetch_episodes_from_external_ids(media_kind, external_ids)?;
+        Ok(merge_canonical_episodes_by_effective_number(&episodes))
+    }
+
     /// Fetches episode metadata from explicit provider-native candidates using the built-in registry.
     pub fn fetch_episodes_from_candidates(
         media_kind: MediaKind,
@@ -221,6 +236,15 @@ impl RemoteApi {
     ) -> Result<Vec<CanonicalEpisode>> {
         let registry = default_registry();
         Self::fetch_episodes_from_candidates_with_registry(media_kind, candidates, &registry)
+    }
+
+    /// Fetches and merges episode metadata from explicit provider-native candidates.
+    pub fn fetch_merged_episodes_from_candidates(
+        media_kind: MediaKind,
+        candidates: &[EpisodeFetchCandidate],
+    ) -> Result<Vec<CanonicalEpisode>> {
+        let episodes = Self::fetch_episodes_from_candidates(media_kind, candidates)?;
+        Ok(merge_canonical_episodes_by_effective_number(&episodes))
     }
 
     /// Fetches episode metadata from explicit candidates using a supplied provider registry.
@@ -256,6 +280,20 @@ impl RemoteApi {
         }
 
         Ok(episodes)
+    }
+
+    /// Fetches and merges episode metadata from explicit candidates using a supplied registry.
+    ///
+    /// This is useful for tests and for applications that inject authenticated or proxied
+    /// providers but still want animedb's remote-only episode merge behavior.
+    pub fn fetch_merged_episodes_from_candidates_with_registry(
+        media_kind: MediaKind,
+        candidates: &[EpisodeFetchCandidate],
+        registry: &ProviderRegistry,
+    ) -> Result<Vec<CanonicalEpisode>> {
+        let episodes =
+            Self::fetch_episodes_from_candidates_with_registry(media_kind, candidates, registry)?;
+        Ok(merge_canonical_episodes_by_effective_number(&episodes))
     }
 
     /// Narrows queries to anime records.
@@ -541,5 +579,97 @@ mod tests {
 
         assert_eq!(episodes.len(), 1);
         assert_eq!(episodes[0].source, SourceName::Jikan);
+    }
+
+    #[test]
+    fn merged_episode_fetch_deduplicates_provider_results() {
+        struct FakeProvider {
+            source: SourceName,
+        }
+
+        impl Provider for FakeProvider {
+            fn source(&self) -> SourceName {
+                self.source
+            }
+
+            fn fetch_page(&self, _request: &SyncRequest, _cursor: SyncCursor) -> Result<FetchPage> {
+                Ok(FetchPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                })
+            }
+
+            fn search(&self, _query: &str, _options: SearchOptions) -> Result<Vec<CanonicalMedia>> {
+                Ok(Vec::new())
+            }
+
+            fn get_by_id(
+                &self,
+                _media_kind: MediaKind,
+                _source_id: &str,
+            ) -> Result<Option<CanonicalMedia>> {
+                Ok(None)
+            }
+
+            fn fetch_episodes(
+                &self,
+                media_kind: MediaKind,
+                source_id: &str,
+            ) -> Result<Vec<CanonicalEpisode>> {
+                let mut episode = CanonicalEpisode {
+                    source: self.source,
+                    source_id: format!("ep-{source_id}"),
+                    media_kind,
+                    season_number: Some(1),
+                    episode_number: Some(1),
+                    absolute_number: Some(1),
+                    title_display: Some(format!("{} title", self.source)),
+                    title_original: None,
+                    synopsis: None,
+                    air_date: None,
+                    runtime_minutes: None,
+                    thumbnail_url: None,
+                    raw_titles_json: None,
+                    raw_json: None,
+                };
+
+                if self.source == SourceName::Kitsu {
+                    episode.runtime_minutes = Some(24);
+                }
+
+                Ok(vec![episode])
+            }
+        }
+
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(FakeProvider {
+            source: SourceName::Jikan,
+        }));
+        registry.register(Arc::new(FakeProvider {
+            source: SourceName::Kitsu,
+        }));
+
+        let candidates = vec![
+            EpisodeFetchCandidate {
+                source: SourceName::Jikan,
+                source_id: "19".into(),
+            },
+            EpisodeFetchCandidate {
+                source: SourceName::Kitsu,
+                source_id: "42".into(),
+            },
+        ];
+
+        let episodes = RemoteApi::fetch_merged_episodes_from_candidates_with_registry(
+            MediaKind::Anime,
+            &candidates,
+            &registry,
+        )
+        .unwrap();
+
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].source, SourceName::Jikan);
+        assert_eq!(episodes[0].title_display.as_deref(), Some("jikan title"));
+        assert_eq!(episodes[0].runtime_minutes, Some(24));
     }
 }

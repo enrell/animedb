@@ -16,8 +16,7 @@ It has two consumption modes that can be used separately or together:
 
 The project also ships a Rust GraphQL API on top of the same crate.
 
-See [REFERENCE.md](/home/kokoro/btw/projects/animedb/REFERENCE.md) for the current library
-and API reference.
+See [REFERENCE.md](REFERENCE.md) for the current library and API reference.
 
 ## Supported providers
 
@@ -38,10 +37,10 @@ and API reference.
 
 ```toml
 # Full featured (local SQLite + all providers) — default
-animedb = "0.6.1"
+animedb = "0.6.2"
 
 # Remote-only, no SQLite dependency (safe for sqlx-based projects)
-animedb = { version = "0.6.1", default-features = false, features = ["remote"] }
+animedb = { version = "0.6.2", default-features = false, features = ["remote"] }
 ```
 
 - `local-db` (default): local SQLite storage, sync state persistence, and the [`AnimeDb`] type.
@@ -153,17 +152,34 @@ let doc = db.media_document_by_external_id(SourceName::Kitsu, "1")?;
 println!("{} has {} episodes", doc.media.title_display, doc.episodes.len());
 ```
 
-For remote-only callers, use the same aggregation logic without writing SQLite:
+For remote-only callers that want one merged episode record per flat episode number, use the
+merged aggregation helper. It fetches from every episode-capable external ID, groups by
+`absolute_number.or(episode_number)`, skips records with no episode number, and selects each
+field from the highest-priority provider that supplied a value. For anime episode data, Jikan
+wins over Kitsu when both have a value, while Kitsu can still fill fields missing from Jikan.
 
 ```rust
 use animedb::{MediaKind, RemoteApi};
 
 let media = RemoteApi::jikan().anime_metadata().by_id("19")?.unwrap();
-let episodes = RemoteApi::fetch_episodes_from_external_ids(
+let episodes = RemoteApi::fetch_merged_episodes_from_external_ids(
     MediaKind::Anime,
     &media.external_ids,
 )?;
-println!("fetched {} provider episode records", episodes.len());
+println!("fetched {} merged episode records", episodes.len());
+```
+
+If you need the raw per-provider records instead, call the lower-level aggregation API directly:
+
+```rust
+use animedb::{MediaKind, RemoteApi};
+
+let media = RemoteApi::jikan().anime_metadata().by_id("19")?.unwrap();
+let provider_records = RemoteApi::fetch_episodes_from_external_ids(
+    MediaKind::Anime,
+    &media.external_ids,
+)?;
+println!("fetched {} provider episode records", provider_records.len());
 ```
 
 If you intentionally want one provider only, call the provider facade directly:

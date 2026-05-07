@@ -13,11 +13,11 @@
 //!
 //! # Provider priority (highest to lowest)
 //!
-//! AniList > IMDb > TVmaze > MyAnimeList > Kitsu > Jikan
+//! AniList > IMDb > TVmaze > MyAnimeList > Jikan > Kitsu
 
 use crate::model::{
-    CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance, SourceName, SourcePayload,
-    StoredEpisode, StoredMedia,
+    CanonicalEpisode, CanonicalMedia, EpisodeSourceRecord, ExternalId, FieldProvenance, SourceName,
+    SourcePayload, StoredEpisode, StoredMedia,
 };
 use std::collections::HashMap;
 
@@ -494,6 +494,73 @@ pub fn merge_episode_source_records(records: &[EpisodeSourceRecord]) -> StoredEp
     }
 }
 
+/// Merges raw remote episode records into one record per flat effective episode number.
+///
+/// This is a persistence-free companion to [`merge_episode_source_records`] for callers that
+/// use [`RemoteApi::fetch_episodes_from_external_ids`](crate::RemoteApi::fetch_episodes_from_external_ids)
+/// without the local SQLite repository. Records are grouped by
+/// `absolute_number.or(episode_number)`, so absolute/global numbering wins when present and
+/// season numbers are intentionally ignored. Records with neither number are skipped.
+///
+/// Field values are selected independently from the highest-priority provider that supplied a
+/// non-null value. For anime episode aggregation this means Jikan fills or overrides Kitsu per
+/// field, while Kitsu can still fill fields missing from Jikan.
+pub fn merge_canonical_episodes_by_effective_number(
+    episodes: &[CanonicalEpisode],
+) -> Vec<CanonicalEpisode> {
+    let mut groups: HashMap<i32, Vec<&CanonicalEpisode>> = HashMap::new();
+
+    for episode in episodes {
+        if let Some(effective_number) = episode.absolute_number.or(episode.episode_number) {
+            groups.entry(effective_number).or_default().push(episode);
+        }
+    }
+
+    let mut merged: Vec<_> = groups
+        .into_values()
+        .map(|group| merge_canonical_episode_group(&group))
+        .collect();
+    merged.sort_by_key(|episode| episode.absolute_number.or(episode.episode_number));
+    merged
+}
+
+fn merge_canonical_episode_group(group: &[&CanonicalEpisode]) -> CanonicalEpisode {
+    let identity = group
+        .iter()
+        .max_by_key(|episode| episode_provider_priority(episode.source))
+        .expect("episode merge group must not be empty");
+
+    CanonicalEpisode {
+        source: identity.source,
+        source_id: identity.source_id.clone(),
+        media_kind: identity.media_kind,
+        season_number: identity.season_number,
+        episode_number: identity.episode_number,
+        absolute_number: identity.absolute_number,
+        title_display: pick_episode_field(group, |episode| episode.title_display.clone()),
+        title_original: pick_episode_field(group, |episode| episode.title_original.clone()),
+        synopsis: pick_episode_field(group, |episode| episode.synopsis.clone()),
+        air_date: pick_episode_field(group, |episode| episode.air_date.clone()),
+        runtime_minutes: pick_episode_field(group, |episode| episode.runtime_minutes),
+        thumbnail_url: pick_episode_field(group, |episode| episode.thumbnail_url.clone()),
+        raw_titles_json: pick_episode_field(group, |episode| episode.raw_titles_json.clone()),
+        raw_json: identity.raw_json.clone(),
+    }
+}
+
+fn pick_episode_field<T: Clone>(
+    group: &[&CanonicalEpisode],
+    field: impl Fn(&CanonicalEpisode) -> Option<T>,
+) -> Option<T> {
+    group
+        .iter()
+        .filter_map(|episode| {
+            field(episode).map(|value| (episode_provider_priority(episode.source), value))
+        })
+        .max_by_key(|(priority, _)| *priority)
+        .map(|(_, value)| value)
+}
+
 fn episode_provider_priority(source: SourceName) -> u8 {
     match source {
         SourceName::AniList => 5,
@@ -808,4 +875,82 @@ fn merge_string_lists(existing: Option<&[String]>, incoming: &[String]) -> Vec<S
         }
     }
     values
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::MediaKind;
+
+    fn episode(
+        source: SourceName,
+        source_id: &str,
+        absolute_number: Option<i32>,
+        episode_number: Option<i32>,
+    ) -> CanonicalEpisode {
+        CanonicalEpisode {
+            source,
+            source_id: source_id.to_string(),
+            media_kind: MediaKind::Anime,
+            season_number: None,
+            episode_number,
+            absolute_number,
+            title_display: None,
+            title_original: None,
+            synopsis: None,
+            air_date: None,
+            runtime_minutes: None,
+            thumbnail_url: None,
+            raw_titles_json: None,
+            raw_json: None,
+        }
+    }
+
+    #[test]
+    fn merges_canonical_episodes_by_field_priority() {
+        let mut kitsu = episode(SourceName::Kitsu, "kitsu-5", None, Some(5));
+        kitsu.title_display = Some("Kitsu title".to_string());
+        kitsu.synopsis = Some("Kitsu synopsis".to_string());
+        kitsu.runtime_minutes = Some(24);
+        kitsu.air_date = Some("2024-01-01".to_string());
+
+        let mut jikan = episode(SourceName::Jikan, "mal-5", Some(5), Some(5));
+        jikan.title_display = Some("Jikan title".to_string());
+        jikan.air_date = Some("2024-01-02".to_string());
+
+        let merged = merge_canonical_episodes_by_effective_number(&[kitsu, jikan]);
+
+        assert_eq!(merged.len(), 1);
+        let episode = &merged[0];
+        assert_eq!(episode.source, SourceName::Jikan);
+        assert_eq!(episode.source_id, "mal-5");
+        assert_eq!(episode.absolute_number, Some(5));
+        assert_eq!(episode.title_display.as_deref(), Some("Jikan title"));
+        assert_eq!(episode.synopsis.as_deref(), Some("Kitsu synopsis"));
+        assert_eq!(episode.runtime_minutes, Some(24));
+        assert_eq!(episode.air_date.as_deref(), Some("2024-01-02"));
+    }
+
+    #[test]
+    fn skips_canonical_episodes_without_effective_number() {
+        let invalid = episode(SourceName::Jikan, "missing-number", None, None);
+        let valid = episode(SourceName::Kitsu, "kitsu-2", None, Some(2));
+
+        let merged = merge_canonical_episodes_by_effective_number(&[invalid, valid]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].episode_number, Some(2));
+    }
+
+    #[test]
+    fn groups_by_absolute_number_before_episode_number() {
+        let season_relative = episode(SourceName::Kitsu, "kitsu-s2e1", Some(13), Some(1));
+        let absolute = episode(SourceName::Jikan, "mal-13", Some(13), Some(13));
+
+        let merged = merge_canonical_episodes_by_effective_number(&[season_relative, absolute]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].absolute_number, Some(13));
+        assert_eq!(merged[0].source, SourceName::Jikan);
+    }
 }

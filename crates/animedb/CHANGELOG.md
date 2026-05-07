@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-05-07
+
+### Added
+
+- **`remote.rs`**: Added `fetch_merged_episodes_from_external_ids` and related
+  candidate-based variants for remote-only callers that want aggregated episode
+  fetch plus deterministic merge in one API call.
+- **`merge.rs`**: Added `merge_canonical_episodes_by_effective_number` for
+  persistence-free deduplication of raw remote episode records by flat effective
+  episode number with field-level provider priority.
+
+### Fixed
+
+- **`lib.rs`**: Feature-gated the SQLite repository module behind `local-db` so
+  remote-only consumers can build with `default-features = false, features = ["remote"]`.
+
+### Documentation
+
+- **`README.md`**: Documented remote-only merged episode aggregation and updated
+  dependency examples for `0.6.2`.
+
 ## [0.6.1] - 2026-05-06
 
 ### Added

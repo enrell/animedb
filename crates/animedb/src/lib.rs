@@ -31,10 +31,14 @@ mod error;
 mod merge;
 #[cfg(feature = "local-db")]
 pub use merge::make_provenance;
-pub use merge::{MergeDecision, merge_episode_source_records, merge_media, provider_weight};
+pub use merge::{
+    MergeDecision, merge_canonical_episodes_by_effective_number, merge_episode_source_records,
+    merge_media, provider_weight,
+};
 mod model;
 pub mod provider;
 mod remote;
+#[cfg(feature = "local-db")]
 pub mod repository;
 #[cfg(feature = "local-db")]
 mod schema;
